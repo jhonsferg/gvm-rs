@@ -20,10 +20,9 @@ $Version     = if ($env:GVM_VERSION)        { $env:GVM_VERSION }        else { "
 $ApiBase     = if ($env:GVM_TEST_API_BASE)  { $env:GVM_TEST_API_BASE }  else { "https://api.github.com" }
 $DlBase      = if ($env:GVM_TEST_DL_BASE)   { $env:GVM_TEST_DL_BASE }   else { "https://github.com" }
 
-# ── Terminal helpers ──────────────────────────────────────────────────────────
+# -- Terminal helpers ----------------------------------------------------------
 function Write-Step([string]$msg) { Write-Host "  -> $msg" -ForegroundColor Cyan }
 function Write-Ok([string]$msg)   { Write-Host "  v  $msg" -ForegroundColor Green }
-function Write-Warn([string]$msg) { Write-Host "  !  $msg" -ForegroundColor Yellow }
 function Abort([string]$msg) {
     Write-Host "`n  x  $msg" -ForegroundColor Red
     exit 1
@@ -34,7 +33,7 @@ Write-Host "  gvm" -ForegroundColor Cyan -NoNewline
 Write-Host " -- Go Version Manager installer" -ForegroundColor White
 Write-Host ""
 
-# ── 1. Detect architecture ────────────────────────────────────────────────────
+# -- 1. Detect architecture ----------------------------------------------------
 $isArm = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture `
          -eq [System.Runtime.InteropServices.Architecture]::Arm64
 
@@ -46,7 +45,7 @@ if (-not [System.Environment]::Is64BitOperatingSystem) {
 
 Write-Step "Detected platform: windows-$Arch"
 
-# ── 2. Resolve version ────────────────────────────────────────────────────────
+# -- 2. Resolve version --------------------------------------------------------
 if ($Version -eq "latest") {
     Write-Step "Fetching latest release from $ApiBase..."
     try {
@@ -60,7 +59,7 @@ if ($Version -eq "latest") {
 
 Write-Step "Installing gvm $Version"
 
-# ── 3. Download binary ────────────────────────────────────────────────────────
+# -- 3. Download binary --------------------------------------------------------
 $BinaryName  = "gvm-windows-$Arch.exe"
 $DownloadUrl = "$DlBase/$REPO/releases/download/$Version/$BinaryName"
 $TmpFile     = [System.IO.Path]::Combine(
@@ -79,14 +78,13 @@ catch {
     Abort "Download failed.`n  URL: $DownloadUrl`n  Error: $_"
 }
 
-# ── 4. Install ────────────────────────────────────────────────────────────────
+# -- 4. Install binary ---------------------------------------------------------
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 }
 
 $Dest = Join-Path $InstallDir "gvm.exe"
 
-# Overwrite gracefully even if the binary is currently running
 if (Test-Path $Dest) {
     Remove-Item -Force $Dest -ErrorAction SilentlyContinue
 }
@@ -94,7 +92,6 @@ if (Test-Path $Dest) {
 Move-Item -Force $TmpFile $Dest
 Write-Ok "Installed to $Dest"
 
-# Verify the binary is functional before touching anything else
 try {
     $installedVersion = & $Dest --version 2>&1
     Write-Ok "Binary check: $installedVersion"
@@ -103,62 +100,18 @@ catch {
     Abort "Installed binary failed to run: $_"
 }
 
-# ── 5. Persist install dir in the user PATH (registry) ───────────────────────
-$UserPath = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::User)
-if ($null -eq $UserPath) { $UserPath = "" }
-
-if ($UserPath -notlike "*$InstallDir*") {
-    $NewPath = "$InstallDir;$UserPath".TrimEnd(";")
-    [Environment]::SetEnvironmentVariable("PATH", $NewPath, [EnvironmentVariableTarget]::User)
-    Write-Ok "Added $InstallDir to your user PATH"
-} else {
-    Write-Ok "$InstallDir is already in your user PATH"
-}
-
-# Inject into the current process PATH so gvm setup works immediately
-if ($env:PATH -notlike "*$InstallDir*") {
-    $env:PATH = "$InstallDir;$env:PATH"
-}
-
-# ── 5b. Add ~/.gvm\current\bin to User PATH (universal shell support) ────────
-#
-# ~/.gvm\current is a junction that gvm use updates on every version switch.
-# Putting its bin\ subdirectory in the registry PATH makes `go` available in
-# CMD, Git Bash, VSCode, GoLand and any other tool that reads the Windows user
-# environment - without needing a shell hook in each one.
-$GvmCurrentBin = "$env:USERPROFILE\.gvm\current\bin"
-$UserPath2 = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::User)
-if ($null -eq $UserPath2) { $UserPath2 = "" }
-
-if ($UserPath2 -notlike "*$GvmCurrentBin*") {
-    $NewPath2 = "$GvmCurrentBin;$UserPath2".TrimEnd(";")
-    [Environment]::SetEnvironmentVariable("PATH", $NewPath2, [EnvironmentVariableTarget]::User)
-    Write-Ok "Added $GvmCurrentBin to your user PATH"
-} else {
-    Write-Ok "$GvmCurrentBin is already in your user PATH"
-}
-
-# ── 6. Configure shell profile ────────────────────────────────────────────────
-Write-Step "Configuring PowerShell profile..."
-
-try {
-    & $Dest setup --shell powershell
-}
-catch {
-    Write-Warn "Could not configure profile automatically: $_"
-    Write-Warn "Run 'gvm setup --shell powershell' manually after restarting your terminal."
-}
-
-# ── 7. Summary ────────────────────────────────────────────────────────────────
+# -- 5. Summary ----------------------------------------------------------------
 Write-Host ""
 Write-Host "  gvm $Version installed successfully!" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Restart your terminal or reload your profile:" -ForegroundColor White
-Write-Host "    . `$PROFILE" -ForegroundColor DarkGray
+Write-Host "  Next steps:" -ForegroundColor White
 Write-Host ""
-Write-Host "  Then install and activate a Go version:" -ForegroundColor White
-Write-Host "    gvm install latest" -ForegroundColor Cyan
-Write-Host "    gvm use latest" -ForegroundColor Cyan
+Write-Host "  1. Configure your shell (adds gvm to PATH and sets up the Go hook):" -ForegroundColor White
+Write-Host "       $Dest setup" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  2. Restart your terminal, then install and activate Go:" -ForegroundColor White
+Write-Host "       gvm install latest" -ForegroundColor Cyan
+Write-Host "       gvm use latest" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Run 'gvm doctor' to verify the setup." -ForegroundColor DarkGray
 Write-Host ""
