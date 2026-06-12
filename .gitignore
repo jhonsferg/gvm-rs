@@ -17,6 +17,9 @@
 .DS_Store
 Thumbs.db
 
+# Local tooling - not part of the distributed project
+/other/
+
 # Test artifacts
 /tmp/
 *.log
