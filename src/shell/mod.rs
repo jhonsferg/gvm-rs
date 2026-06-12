@@ -89,6 +89,15 @@ pub trait ShellConfig: std::fmt::Debug {
     /// `PATH` and `GOROOT` are immediately restored to whatever `.go-version`
     /// or the global default says.
     fn shell_unset_script(&self) -> &'static str;
+
+    /// Returns the executable name used to check whether this shell is
+    /// installed on the current system (e.g. `"bash"`, `"zsh"`, `"pwsh"`).
+    ///
+    /// The default implementation returns `name()`, which is correct for
+    /// bash, zsh, and fish. PowerShell overrides this to return `"pwsh"`.
+    fn binary_name(&self) -> &'static str {
+        self.name()
+    }
 }
 
 // --- Concrete implementations ------------------------------------------------
@@ -194,6 +203,12 @@ impl ShellConfig for PowerShell {
     fn name(&self) -> &'static str {
         "powershell"
     }
+    fn binary_name(&self) -> &'static str {
+        // The executable is `pwsh` (PowerShell 7+) on all platforms.
+        // On older Windows installations it may be `powershell.exe`, but
+        // `is_available` checks both when running on Windows.
+        "pwsh"
+    }
     fn env_script(&self, ctx: &EnvContext<'_>) -> String {
         powershell::env_script(ctx)
     }
@@ -267,6 +282,62 @@ pub fn from_str(s: &str) -> Result<Box<dyn ShellConfig>> {
             s
         ),
     }
+}
+
+// --- Shell availability -------------------------------------------------------
+
+/// Returns `true` if the shell binary is present somewhere in `PATH`.
+///
+/// PowerShell on Windows is always considered available since it is the
+/// host process. On other platforms the `pwsh` binary is searched in PATH.
+/// For bash, zsh, and fish the binary name matches `shell.name()`.
+pub fn is_available(shell: &dyn ShellConfig) -> bool {
+    // On Windows, PowerShell is always the host - no binary search needed.
+    #[cfg(windows)]
+    if shell.name() == "powershell" {
+        return true;
+    }
+    find_binary(shell.binary_name())
+}
+
+/// Returns the names of every supported shell that is currently installed.
+///
+/// The list is ordered: powershell, bash, zsh, fish. Only shells whose
+/// binary is found in PATH (or that are natively available) are included.
+pub fn available_shells() -> Vec<&'static str> {
+    let candidates: &[(&dyn ShellConfig, &'static str)] = &[
+        (&PowerShell, "powershell"),
+        (&Bash, "bash"),
+        (&Zsh, "zsh"),
+        (&Fish, "fish"),
+    ];
+    candidates
+        .iter()
+        .filter(|(sh, _)| is_available(*sh))
+        .map(|(_, name)| *name)
+        .collect()
+}
+
+/// Searches `PATH` for an executable with the given name.
+///
+/// On Windows also checks for `<name>.exe` since many Unix-style tools
+/// are distributed without extension aliases.
+fn find_binary(name: &str) -> bool {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let Ok(path_var) = std::env::var("PATH") else {
+        return false;
+    };
+    for dir in path_var.split(sep).filter(|s| !s.is_empty()) {
+        let base = Path::new(dir).join(name);
+        if base.exists() {
+            return true;
+        }
+        #[cfg(windows)]
+        if Path::new(dir).join(format!("{name}.exe")).exists() {
+            return true;
+        }
+    }
+    false
 }
 
 // --- Profile injection -------------------------------------------------------
