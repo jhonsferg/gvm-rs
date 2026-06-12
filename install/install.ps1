@@ -100,16 +100,20 @@ catch {
     Abort "Installed binary failed to run: $_"
 }
 
-# -- 5. Summary ----------------------------------------------------------------
+# -- 5. Run gvm setup ----------------------------------------------------------
+# Run setup via full path so it works even before InstallDir is on PATH.
 Write-Host ""
-Write-Host "  gvm $Version installed successfully!" -ForegroundColor Green
+Write-Host "  Configuring shell environment..." -ForegroundColor White
+Write-Host ""
+& $Dest setup
+
+# -- 6. Summary ----------------------------------------------------------------
+Write-Host ""
+Write-Host "  gvm $Version installed and configured!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor White
 Write-Host ""
-Write-Host "  1. Configure your shell (adds gvm to PATH and sets up the Go hook):" -ForegroundColor White
-Write-Host "       $Dest setup" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  2. Restart your terminal, then install and activate Go:" -ForegroundColor White
+Write-Host "  1. Restart your terminal, then install and activate Go:" -ForegroundColor White
 Write-Host "       gvm install latest" -ForegroundColor Cyan
 Write-Host "       gvm use latest" -ForegroundColor Cyan
 Write-Host ""
