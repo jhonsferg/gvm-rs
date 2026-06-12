@@ -49,7 +49,7 @@ fn run() -> anyhow::Result<()> {
         Command::Current => commands::current::run(&config),
         Command::Path { version } => commands::path::run(&config, version.as_deref()),
         Command::Env { shell } => commands::env::run(&config, shell.as_deref()),
-        Command::Setup { shell } => commands::setup::run(shell.as_deref()),
+        Command::Setup { shell, reset } => commands::setup::run(shell.as_deref(), reset),
         Command::Exec { version, args } => commands::exec::run(&config, &version, &args),
         Command::Doctor { shell } => commands::doctor::run(&config, shell.as_deref()),
         Command::Completions { shell } => commands::completions::run(&shell),
