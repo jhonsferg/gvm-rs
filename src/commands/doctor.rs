@@ -202,13 +202,27 @@ pub fn run(config: &Config, shell_str: Option<&str>) -> Result<()> {
             let first_is_gvm =
                 go_paths[0].starts_with(&versions_dir) || go_paths[0].starts_with(&current_dir);
             if first_is_gvm {
-                warn(&format!(
-                    "{n} Go binaries found in PATH - {} non-gvm installation(s) are shadowed \
-                     (consider removing them to avoid confusion):",
-                    n - 1
-                ));
-                for path in go_paths.iter().skip(1) {
-                    println!("    {} (shadowed)", path.display());
+                let non_gvm_shadowed: Vec<_> = go_paths
+                    .iter()
+                    .skip(1)
+                    .filter(|p| !p.starts_with(&versions_dir) && !p.starts_with(&current_dir))
+                    .collect();
+                if non_gvm_shadowed.is_empty() {
+                    // All extra entries are other gvm-managed paths (e.g. both the versioned
+                    // directory and the ~/.gvm/current junction appear in PATH). Harmless.
+                    ok(&format!(
+                        "Active Go is gvm-managed ({})",
+                        go_paths[0].display()
+                    ));
+                } else {
+                    warn(&format!(
+                        "{n} Go binaries found in PATH - {} non-gvm installation(s) are shadowed \
+                         (consider removing them to avoid confusion):",
+                        non_gvm_shadowed.len()
+                    ));
+                    for path in non_gvm_shadowed.iter() {
+                        println!("    {} (non-gvm, shadowed)", path.display());
+                    }
                 }
             } else {
                 fail(&format!(
