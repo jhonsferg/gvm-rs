@@ -95,15 +95,20 @@ jobs:
       # The tag (e.g. v1.1.0) is stripped of its leading 'v' and written into
       # Cargo.toml and Cargo.lock so that `gvm --version` and the upgrade check
       # report the correct version without committing anything to main.
+      #
+      # sed note: macOS uses BSD sed which does not support GNU-only 0,/pat/
+      # address ranges. The simple s/^version = .../ pattern is portable because
+      # only the [package] version line starts at column 0 in our Cargo.toml.
+      # Cargo.lock needs a two-line match so perl is used there instead.
       - name: Set version from tag
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Update Cargo.toml - target only the first version = "..." line (package version)
-          sed -i.bak "0,/^version = \"[^\"]*\"/{s/^version = \"[^\"]*\"/version = \"${VERSION}\"/}" Cargo.toml
+          # Cargo.toml - simple substitution, no GNU-only address ranges
+          sed -i.bak 's/^version = "[^"]*"/version = "'"${VERSION}"'"/' Cargo.toml
           rm -f Cargo.toml.bak
-          # Sync the gvm entry in Cargo.lock so --locked does not fail
-          sed -i.bak "/^name = \"gvm\"$/{n;s/version = \"[^\"]*\"/version = \"${VERSION}\"/}" Cargo.lock
+          # Cargo.lock - stateful perl: set flag on name = "gvm", replace version on next line
+          perl -i.bak -pe 'if (/^name = "gvm"$/) { $f=1 } elsif ($f) { s/^version = "[^"]*"/version = "'"${VERSION}"'"/; $f=0 }' Cargo.lock
           rm -f Cargo.lock.bak
           echo "Version set to ${VERSION}"
           grep '^version' Cargo.toml
