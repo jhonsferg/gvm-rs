@@ -21,7 +21,7 @@
 //! (and the Windows registry on Windows), then re-applies clean configuration.
 //! Only gvm-managed blocks are touched; all other content is preserved.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::Colorize;
 
 use crate::{shell, shell::ShellConfig};
@@ -178,6 +178,7 @@ fn strip_all(sh: &dyn ShellConfig) -> Result<()> {
 /// Idempotent: entries that are already present are not duplicated.
 #[cfg(target_os = "windows")]
 fn inject_windows_registry() -> Result<()> {
+    use anyhow::Context;
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
     use winreg::RegKey;
 
@@ -239,6 +240,7 @@ fn inject_windows_registry() -> Result<()> {
 /// Removes all gvm-managed entries from the Windows user PATH in the registry.
 #[cfg(target_os = "windows")]
 fn strip_windows_registry() -> Result<()> {
+    use anyhow::Context;
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
     use winreg::RegKey;
 
