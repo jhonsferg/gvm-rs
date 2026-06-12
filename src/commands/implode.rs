@@ -11,7 +11,7 @@
 
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::{config::Config, shell};
 
@@ -79,9 +79,9 @@ pub fn run(config: &Config, force: bool) -> Result<()> {
         println!("  {} Removed {}", "✓".green(), config.root.display());
     }
 
-    // ── Clean shell profile ───────────────────────────────────────────────────
+    // ── Clean shell profiles (interactive + login) ────────────────────────────
     if let Some(ref profile) = profile_path {
-        match clean_profile(profile) {
+        match shell::strip_profile(profile) {
             Ok(true) => println!("  {} Cleaned {}", "✓".green(), profile.display()),
             Ok(false) => {}
             Err(e) => eprintln!(
@@ -89,6 +89,21 @@ pub fn run(config: &Config, force: bool) -> Result<()> {
                 "!".yellow(),
                 profile.display()
             ),
+        }
+    }
+    // Also clean the login profile (e.g. ~/.profile) where gvm setup injects
+    // the static PATH entry for GUI applications.
+    if let Some(ref sh) = sh {
+        if let Some(login_profile) = sh.login_profile_path() {
+            match shell::strip_profile(&login_profile) {
+                Ok(true) => println!("  {} Cleaned {}", "✓".green(), login_profile.display()),
+                Ok(false) => {}
+                Err(e) => eprintln!(
+                    "  {} Could not clean {}: {e}",
+                    "!".yellow(),
+                    login_profile.display()
+                ),
+            }
         }
     }
 
@@ -138,92 +153,6 @@ fn dir_size_mb(root: &Path) -> f64 {
     walk(root) as f64 / (1024.0 * 1024.0)
 }
 
-// ── Profile cleaning ──────────────────────────────────────────────────────────
-
-/// Removes all gvm-managed lines from `profile`.
-///
-/// Returns `Ok(true)` when the file was modified, `Ok(false)` when it
-/// contained no gvm entries (or did not exist).
-///
-/// # Errors
-///
-/// Returns an error if the file cannot be read or written.
-fn clean_profile(profile: &PathBuf) -> Result<bool> {
-    if !profile.exists() {
-        return Ok(false);
-    }
-    let content = std::fs::read_to_string(profile)
-        .with_context(|| format!("Cannot read {}", profile.display()))?;
-    let cleaned = remove_gvm_lines(&content);
-    if cleaned == content {
-        return Ok(false);
-    }
-    std::fs::write(profile, &cleaned)
-        .with_context(|| format!("Cannot write {}", profile.display()))?;
-    Ok(true)
-}
-
-/// Strips every line that belongs to a gvm-managed block.
-///
-/// Three block types are recognised:
-///
-/// - `# gvm init` - written by `gvm setup`. The marker and every subsequent
-///   line up to (and including) the first blank line are removed. For a
-///   single-line block (e.g. the `eval "$(gvm env …)"` one-liner) this means
-///   the marker + one content line.
-/// - `# gvm: binary location` - written by `install.sh`. Same format: marker
-///   + one content line (`export PATH=…`).
-/// - `# gvm wrapper` - written by `gvm setup`. Covers a multi-line shell
-///   function definition; all lines from the marker until the first following
-///   blank line are removed.
-///
-/// After removal, runs of more than one consecutive blank line are collapsed
-/// to a single blank line so the file remains tidy.
-fn remove_gvm_lines(content: &str) -> String {
-    const MARKERS: &[&str] = &["# gvm init", "# gvm: binary location", "# gvm wrapper"];
-
-    // `in_block` is true while we are skipping lines belonging to a marker
-    // block. A blank line (or end-of-file) terminates the block.
-    let mut in_block = false;
-    let mut out: Vec<&str> = Vec::new();
-
-    for line in content.lines() {
-        if in_block {
-            if line.trim().is_empty() {
-                // Blank line ends the block; skip the blank itself so the
-                // surrounding content re-joins cleanly after collapsing.
-                in_block = false;
-            }
-            // Skip every line inside the block (content and terminating blank).
-            continue;
-        }
-        if MARKERS.iter().any(|m| line.contains(m)) {
-            in_block = true;
-            continue; // drop the marker line itself
-        }
-        out.push(line);
-    }
-
-    // Collapse consecutive blank lines down to one.
-    let mut result = String::with_capacity(content.len());
-    let mut prev_blank = false;
-    for line in &out {
-        let blank = line.trim().is_empty();
-        if blank && prev_blank {
-            continue;
-        }
-        result.push_str(line);
-        result.push('\n');
-        prev_blank = blank;
-    }
-
-    let trimmed = result.trim_end().to_string();
-    if trimmed.is_empty() {
-        trimmed
-    } else {
-        trimmed + "\n"
-    }
-}
 
 // ── Binary removal ────────────────────────────────────────────────────────────
 
@@ -252,77 +181,3 @@ fn remove_binary(exe: &Path) -> Result<()> {
     Ok(())
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::remove_gvm_lines;
-
-    #[test]
-    fn removes_init_block() {
-        let input = "source ~/.bashrc\n\n# gvm init\neval \"$(gvm env --shell bash)\"\n";
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm init"));
-        assert!(!got.contains("eval"));
-        assert!(got.contains("source ~/.bashrc"));
-    }
-
-    #[test]
-    fn removes_binary_location_block() {
-        let input = "# existing line\n\n# gvm: binary location\nexport PATH=\"/home/user/.local/bin:$PATH\"\n";
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm: binary location"));
-        assert!(!got.contains("export PATH"));
-        assert!(got.contains("# existing line"));
-    }
-
-    #[test]
-    fn removes_wrapper_block() {
-        let input = concat!(
-            "source ~/.bashrc\n\n",
-            "# gvm wrapper\n",
-            "gvm() {\n",
-            "    command gvm \"$@\"\n",
-            "    local _gvm_exit=$?\n",
-            "    return $_gvm_exit\n",
-            "}\n",
-        );
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm wrapper"));
-        assert!(!got.contains("gvm()"));
-        assert!(!got.contains("_gvm_exit"));
-        assert!(got.contains("source ~/.bashrc"));
-    }
-
-    #[test]
-    fn removes_both_blocks() {
-        let input = concat!(
-            "# user config\n\n",
-            "# gvm: binary location\nexport PATH=\"/bin:$PATH\"\n\n",
-            "# gvm init\neval \"$(gvm env --shell bash)\"\n\n",
-            "# gvm wrapper\n",
-            "gvm() {\n",
-            "    command gvm \"$@\"\n",
-            "}\n",
-        );
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm init"));
-        assert!(!got.contains("gvm: binary location"));
-        assert!(!got.contains("gvm wrapper"));
-        assert!(!got.contains("gvm()"));
-        assert!(got.contains("# user config"));
-    }
-
-    #[test]
-    fn idempotent_on_clean_file() {
-        let input = "export FOO=bar\nalias ll='ls -la'\n";
-        assert_eq!(remove_gvm_lines(input), input);
-    }
-
-    #[test]
-    fn collapses_extra_blank_lines() {
-        let input = "line1\n\n\n\nline2\n";
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("\n\n\n"));
-    }
-}
