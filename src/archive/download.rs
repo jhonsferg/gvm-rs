@@ -1,44 +1,73 @@
 //! HTTPS download with progress reporting and checksum verification.
 //!
-//! [`fetch`] streams the response body to disk while displaying a
-//! [`indicatif`] progress bar. [`verify_sha256`] computes the SHA-256 digest
-//! of a local file and compares it against the expected hex string published
-//! by go.dev.
+//! [`fetch`] streams the response body to disk while displaying a real-time
+//! [`indicatif`] progress bar. When the server sends a `Content-Length`
+//! header a determinate bar shows bytes transferred, download speed, and ETA.
+//! When the length is unknown a spinner shows bytes received and speed.
+//!
+//! [`verify_sha256`] computes the SHA-256 digest of a local file and compares
+//! it against the expected hex string published by go.dev.
 
-use crate::http;
+use std::io::Read;
+use std::path::Path;
+use std::time::Duration;
+
 use anyhow::{bail, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
-use std::io::Read;
-use std::path::Path;
+
+use crate::http;
 
 /// Downloads the resource at `url` and writes it to `dest`.
 ///
-/// A progress bar is displayed while the transfer is in progress. The bar
-/// shows the number of bytes transferred, total size, and an ETA. It is
-/// cleared from the terminal when the download completes.
+/// Displays a live progress bar while the transfer is in progress:
+/// - **Known size**: filled bar with bytes transferred, total, speed, and ETA.
+/// - **Unknown size**: spinner with bytes received and speed.
+///
+/// When `--verbose` is active, the request method, URL, response status, and
+/// all response headers are printed to stderr before the bar appears.
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - The HTTP request cannot be made (network error).
-/// - The server returns a non-2xx status code.
-/// - `dest` cannot be created or written to.
-/// - The connection is interrupted before the download completes.
+/// Returns an error if the HTTP request cannot be made, the server returns a
+/// non-2xx status, `dest` cannot be written to, or the connection drops.
 pub fn fetch(url: &str, dest: &Path) -> Result<()> {
+    http::log_request("GET", url);
+
     let mut response = http::agent()?
         .get(url)
         .call()
         .with_context(|| format!("Failed to connect to {url}"))?;
 
-    let total = response.body().content_length().unwrap_or(0);
-    let pb = ProgressBar::new(total);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("  {spinner:.cyan} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .unwrap()
-            .progress_chars("=->"),
+    http::log_response(
+        response.status().as_u16(),
+        response.status().canonical_reason().unwrap_or(""),
+        response.headers(),
     );
+
+    let total = response.body().content_length().unwrap_or(0);
+
+    let pb = if total > 0 {
+        let bar = ProgressBar::new(total);
+        bar.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "  [{bar:40.cyan/blue}] {bytes}/{total_bytes}  {bytes_per_sec}  eta {eta}",
+                )
+                .unwrap()
+                .progress_chars("=>-"),
+        );
+        bar
+    } else {
+        let bar = ProgressBar::new_spinner();
+        bar.set_style(
+            ProgressStyle::default_spinner()
+                .template("  {spinner:.cyan}  {bytes}  {bytes_per_sec}")
+                .unwrap(),
+        );
+        bar
+    };
+    pb.enable_steady_tick(Duration::from_millis(120));
 
     let mut file = std::fs::File::create(dest)
         .with_context(|| format!("Cannot create file at {}", dest.display()))?;
@@ -61,9 +90,7 @@ pub fn fetch(url: &str, dest: &Path) -> Result<()> {
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - `file` cannot be opened or read.
-/// - The computed digest does not match `expected`.
+/// Returns an error if `file` cannot be read or the digest does not match.
 pub fn verify_sha256(file: &Path, expected: &str) -> Result<()> {
     if expected.is_empty() {
         return Ok(());

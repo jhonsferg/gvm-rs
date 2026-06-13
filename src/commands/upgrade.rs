@@ -60,6 +60,8 @@ pub fn run(force: bool) -> Result<()> {
     println!("{} Checking for updates...", "->".cyan());
 
     let api_url = format!("{}/repos/{REPO}/releases/latest", api_base());
+    http::log_request("GET", &api_url);
+
     let mut response = match http::agent()?.get(&api_url).call() {
         Ok(r) => r,
         Err(ureq::Error::StatusCode(404)) => anyhow::bail!(
@@ -71,6 +73,12 @@ pub fn run(force: bool) -> Result<()> {
                 .context("Failed to reach GitHub API - check your internet connection")
         }
     };
+
+    http::log_response(
+        response.status().as_u16(),
+        response.status().canonical_reason().unwrap_or(""),
+        response.headers(),
+    );
 
     let release: GithubRelease = response
         .body_mut()

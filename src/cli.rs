@@ -17,6 +17,14 @@ use clap::{Parser, Subcommand};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+
+    /// Print HTTP request/response details (method, URL, status, headers).
+    ///
+    /// Useful for diagnosing network issues, proxy behaviour, or unexpected
+    /// server responses. Output is written to stderr so it does not interfere
+    /// with commands that emit machine-readable text to stdout.
+    #[arg(long, short = 'v', global = true)]
+    pub verbose: bool,
 }
 
 /// All subcommands exposed by `gvm`.

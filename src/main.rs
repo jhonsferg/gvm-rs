@@ -37,6 +37,7 @@ fn main() {
 /// Returns an error if configuration cannot be loaded or if the command fails.
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    http::set_verbose(cli.verbose);
     let config = Config::load()?;
 
     match cli.command {
