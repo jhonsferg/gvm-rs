@@ -133,9 +133,13 @@ fn probe(url: &str) -> Result<(u64, bool)> {
                 resp.status().canonical_reason().unwrap_or(""),
                 resp.headers(),
             );
+            // go.dev serves files with transfer-encoding:chunked and omits
+            // content-length; fall back to x-identity-content-length which
+            // Google's CDN always provides for binary assets.
             let len = resp
                 .headers()
                 .get("content-length")
+                .or_else(|| resp.headers().get("x-identity-content-length"))
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0u64);
@@ -191,7 +195,10 @@ fn fetch_single(url: &str, dest: &Path, content_length: u64, retries: u8) -> Res
 fn try_single(url: &str, part: &Path, offset: u64, pb: &ProgressBar) -> Result<()> {
     http::log_request("GET", url);
 
-    let mut req = http::agent()?.get(url);
+    let mut req = http::agent()?
+        .get(url)
+        // Prevent transparent gzip so the raw binary body is never decoded.
+        .header("Accept-Encoding", "identity");
     if offset > 0 {
         req = req.header("Range", &format!("bytes={offset}-"));
     }
@@ -388,6 +395,9 @@ fn try_range(
     let mut response = http::agent()?
         .get(url)
         .header("Range", &range_hdr)
+        // Disable transparent compression: a byte-range response is raw binary
+        // and must not be gzip-decoded by the HTTP client.
+        .header("Accept-Encoding", "identity")
         .call()
         .with_context(|| format!("Failed to fetch range {range_hdr}"))?;
 
