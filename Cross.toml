@@ -1,0 +1,4 @@
+[target.aarch64-linux-android]
+pre-build = [
+  "ar rcs /android-ndk/lib/gcc/aarch64-linux-android/4.9.x/libunwind.a"
+]
