@@ -344,7 +344,8 @@ fn compile(
 
     let mut cmd = std::process::Command::new("bash");
     cmd.arg(&script);
-    cmd.current_dir(source_root);
+    // make.bash checks for run.bash in the current directory, so it must run from src/.
+    cmd.current_dir(source_root.join("src"));
     cmd.env("GOROOT_BOOTSTRAP", bootstrap_path);
 
     if no_cgo {
