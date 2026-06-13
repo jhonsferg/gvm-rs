@@ -5,8 +5,8 @@
 //! of a local file and compares it against the expected hex string published
 //! by go.dev.
 
-use anyhow::{bail, Context, Result};
 use crate::http;
+use anyhow::{bail, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use std::io::Read;
