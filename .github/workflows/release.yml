@@ -1,8 +1,8 @@
 name: Release
 
 # Triggered by pushing a version tag - either manually or by the auto-release
-# job in ci.yml. Builds binaries for all supported platforms, embeds the tag
-# version into each binary at compile time, generates checksums + SBOM,
+# job in ci.yml. Builds compressed archives for all supported platforms, embeds
+# the tag version into each binary at compile time, generates checksums + SBOM,
 # creates the GitHub Release with structured notes and uploads everything.
 on:
   push:
@@ -22,12 +22,11 @@ env:
 jobs:
   # ── Cross-compile for every supported target ──────────────────────────────────
   #
-  # Naming convention (must stay in sync with upgrade.rs::release_binary_name()):
-  #   Raw binary : gvm-{os}-{arch}[.exe]   - what `gvm upgrade` downloads
-  #   Archive    : gvm_{os}_{arch}.tar.gz  - for manual installation
-  #   Archive    : gvm_{os}_{arch}.zip     - Windows manual installation
+  # Naming convention (must stay in sync with upgrade.rs::release_archive_name()):
+  #   Archive : gvm_{os}_{arch}.tar.gz  - Linux / macOS
+  #   Archive : gvm_{os}_{arch}.zip     - Windows
   build:
-    name: Build ${{ matrix.artifact_binary }}
+    name: Build ${{ matrix.artifact_archive }}
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -39,7 +38,6 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             binary_name: gvm
-            artifact_binary: gvm-linux-x86_64
             artifact_archive: gvm_linux_x86_64.tar.gz
             archive_type: tar
             use_cross: false
@@ -48,8 +46,47 @@ jobs:
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             binary_name: gvm
-            artifact_binary: gvm-linux-aarch64
             artifact_archive: gvm_linux_aarch64.tar.gz
+            archive_type: tar
+            use_cross: true
+
+          # ── Linux armv7 - static musl (cross + Docker, Termux/Android) ───────
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-musleabihf
+            binary_name: gvm
+            artifact_archive: gvm_linux_armv7.tar.gz
+            archive_type: tar
+            use_cross: true
+
+          # ── Linux 386 - static musl (cross + Docker) ─────────────────────────
+          - os: ubuntu-latest
+            target: i686-unknown-linux-musl
+            binary_name: gvm
+            artifact_archive: gvm_linux_386.tar.gz
+            archive_type: tar
+            use_cross: true
+
+          # ── Linux riscv64 - gnu (no stable musl target) ───────────────────────
+          - os: ubuntu-latest
+            target: riscv64gc-unknown-linux-gnu
+            binary_name: gvm
+            artifact_archive: gvm_linux_riscv64.tar.gz
+            archive_type: tar
+            use_cross: true
+
+          # ── Linux s390x - gnu (IBM Z mainframe) ───────────────────────────────
+          - os: ubuntu-latest
+            target: s390x-unknown-linux-gnu
+            binary_name: gvm
+            artifact_archive: gvm_linux_s390x.tar.gz
+            archive_type: tar
+            use_cross: true
+
+          # ── Linux ppc64le - gnu (IBM POWER LE) ───────────────────────────────
+          - os: ubuntu-latest
+            target: powerpc64le-unknown-linux-gnu
+            binary_name: gvm
+            artifact_archive: gvm_linux_ppc64le.tar.gz
             archive_type: tar
             use_cross: true
 
@@ -57,7 +94,6 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             binary_name: gvm
-            artifact_binary: gvm-darwin-x86_64
             artifact_archive: gvm_darwin_x86_64.tar.gz
             archive_type: tar
             use_cross: false
@@ -66,7 +102,6 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             binary_name: gvm
-            artifact_binary: gvm-darwin-aarch64
             artifact_archive: gvm_darwin_aarch64.tar.gz
             archive_type: tar
             use_cross: false
@@ -75,8 +110,15 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             binary_name: gvm.exe
-            artifact_binary: gvm-windows-x86_64.exe
             artifact_archive: gvm_windows_x86_64.zip
+            archive_type: zip
+            use_cross: false
+
+          # ── Windows arm64 (MSVC cross-compile) ───────────────────────────────
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            binary_name: gvm.exe
+            artifact_archive: gvm_windows_arm64.zip
             archive_type: zip
             use_cross: false
 
@@ -123,7 +165,7 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update -q && sudo apt-get install -y musl-tools
 
-      - name: Install cross (Linux aarch64 via Docker)
+      - name: Install cross (Linux targets via Docker)
         if: matrix.use_cross
         run: cargo install cross --locked
 
@@ -136,24 +178,6 @@ jobs:
       - name: Build binary (cargo - native)
         if: "!matrix.use_cross"
         run: cargo build --release --locked --target ${{ matrix.target }}
-
-      # ── Package raw binary ────────────────────────────────────────────────────
-      #
-      # This is what `gvm upgrade` downloads directly. The name must exactly
-      # match what upgrade.rs::release_binary_name() constructs at runtime.
-
-      - name: Copy raw binary (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" \
-             "${{ matrix.artifact_binary }}"
-
-      - name: Copy raw binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Copy-Item "target\${{ matrix.target }}\release\${{ matrix.binary_name }}" `
-                    "${{ matrix.artifact_binary }}"
 
       # ── Package compressed archive ────────────────────────────────────────────
 
@@ -176,14 +200,6 @@ jobs:
           Remove-Item gvm.exe
 
       # ── Upload to workflow artifacts (collected by publish job) ───────────────
-
-      - name: Upload raw binary
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: ${{ matrix.artifact_binary }}
-          path: ${{ matrix.artifact_binary }}
-          if-no-files-found: error
-          retention-days: 1
 
       - name: Upload archive
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -221,7 +237,7 @@ jobs:
       - name: Generate checksums.txt
         working-directory: dist
         run: |
-          sha256sum gvm-* gvm_* > checksums.txt
+          sha256sum gvm_* > checksums.txt
           echo ""
           echo "=== checksums.txt ==="
           cat checksums.txt
@@ -360,11 +376,6 @@ jobs:
             echo ""
             echo "| File | Size | Purpose |"
             echo "|------|------|---------|"
-            for f in dist/gvm-*; do
-              [ -f "$f" ] || continue
-              printf "| \`%s\` | %s | raw binary (\`gvm upgrade\`) |\n" \
-                "$(basename "$f")" "$(du -h "$f" | cut -f1)"
-            done
             for f in dist/gvm_*; do
               [ -f "$f" ] || continue
               printf "| \`%s\` | %s | install archive |\n" \

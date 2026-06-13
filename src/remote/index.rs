@@ -76,12 +76,23 @@ pub fn host_os() -> &'static str {
 
 /// Returns the go.dev architecture identifier for the current compilation target.
 ///
-/// Possible return values: `"amd64"`, `"arm64"`, `"386"`.
+/// Possible return values match Go's `GOARCH` naming: `"amd64"`, `"arm64"`,
+/// `"arm"`, `"386"`, `"riscv64"`, `"s390x"`, `"ppc64le"`.
 pub fn host_arch() -> &'static str {
     if cfg!(target_arch = "x86_64") {
         "amd64"
     } else if cfg!(target_arch = "aarch64") {
         "arm64"
+    } else if cfg!(target_arch = "arm") {
+        "arm"
+    } else if cfg!(target_arch = "x86") {
+        "386"
+    } else if cfg!(target_arch = "riscv64") {
+        "riscv64"
+    } else if cfg!(target_arch = "s390x") {
+        "s390x"
+    } else if cfg!(target_arch = "powerpc64") {
+        "ppc64le"
     } else {
         "386"
     }

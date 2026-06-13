@@ -42,6 +42,7 @@ need() {
     command -v "$1" > /dev/null 2>&1 || die "'$1' is required but not installed."
 }
 need curl
+need tar
 
 # -- 2. Detect OS and architecture ---------------------------------------------
 OS="$(uname -s 2>/dev/null || echo unknown)"
@@ -53,9 +54,14 @@ esac
 
 MACHINE="$(uname -m 2>/dev/null || echo unknown)"
 case "$MACHINE" in
-    x86_64 | amd64)           ARCH="x86_64"  ;;
-    aarch64 | arm64 | armv8*) ARCH="aarch64" ;;
-    *)                         die "Unsupported architecture: $MACHINE" ;;
+    x86_64 | amd64)             ARCH="x86_64"  ;;
+    aarch64 | arm64 | armv8*)   ARCH="aarch64" ;;
+    armv7* | armhf | armv6l)    ARCH="armv7"   ;;
+    i686 | i386)                ARCH="386"     ;;
+    riscv64)                    ARCH="riscv64" ;;
+    s390x)                      ARCH="s390x"   ;;
+    ppc64le)                    ARCH="ppc64le" ;;
+    *)                          die "Unsupported architecture: $MACHINE" ;;
 esac
 
 step "Detected platform: $PLATFORM-$ARCH"
@@ -73,22 +79,25 @@ fi
 
 step "Installing gvm $GVM_VERSION"
 
-# -- 4. Download binary --------------------------------------------------------
-BINARY="gvm-$PLATFORM-$ARCH"
-URL="$DL_BASE/$REPO/releases/download/$GVM_VERSION/$BINARY"
+# -- 4. Download archive -------------------------------------------------------
+ARCHIVE="gvm_${PLATFORM}_${ARCH}.tar.gz"
+URL="$DL_BASE/$REPO/releases/download/$GVM_VERSION/$ARCHIVE"
 TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/gvm-install.XXXXXX")"
 
 trap 'rm -f "$TMP_FILE"' EXIT INT TERM
 
-step "Downloading $BINARY..."
+step "Downloading $ARCHIVE..."
 if ! curl -fSL --progress-bar "$URL" -o "$TMP_FILE"; then
     die "Download failed.\n  URL: $URL\n  Check that release $GVM_VERSION exists."
 fi
-chmod +x "$TMP_FILE"
 
-# -- 5. Install binary ---------------------------------------------------------
+# -- 5. Extract and install binary ---------------------------------------------
 mkdir -p "$INSTALL_DIR"
-mv -f "$TMP_FILE" "$INSTALL_DIR/gvm"
+step "Extracting..."
+if ! tar xzf "$TMP_FILE" -C "$INSTALL_DIR" gvm; then
+    die "Extraction failed. The archive may be corrupted."
+fi
+chmod +x "$INSTALL_DIR/gvm"
 ok "Installed to $INSTALL_DIR/gvm"
 
 # -- 6. Run gvm setup ----------------------------------------------------------
