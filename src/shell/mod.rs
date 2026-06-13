@@ -98,6 +98,22 @@ pub trait ShellConfig: std::fmt::Debug {
     fn binary_name(&self) -> &'static str {
         self.name()
     }
+
+    /// Returns `true` if the `# gvm init` block should prepend an explicit
+    /// `export PATH` line for the gvm binary directory.
+    ///
+    /// Needed for bash and zsh: on Linux/macOS, the login profile (`~/.profile`,
+    /// `~/.zprofile`) sources the interactive profile (`~/.bashrc`, `~/.zshrc`)
+    /// BEFORE adding `~/.local/bin` to PATH, so `gvm env` would fail with
+    /// "command not found" on every SSH login. Prepending the install dir inside
+    /// the `# gvm init` block makes it self-sufficient regardless of order.
+    ///
+    /// Fish guards its init line with `command -q gvm` (silent skip), so it
+    /// never emits errors. PowerShell uses the Windows registry, where PATH is
+    /// fully set before any shell starts.
+    fn needs_bin_path_in_init(&self) -> bool {
+        false
+    }
 }
 
 // --- Concrete implementations ------------------------------------------------
@@ -142,6 +158,9 @@ impl ShellConfig for Bash {
     fn shell_unset_script(&self) -> &'static str {
         bash::shell_unset_script()
     }
+    fn needs_bin_path_in_init(&self) -> bool {
+        true
+    }
 }
 
 impl ShellConfig for Zsh {
@@ -172,6 +191,9 @@ impl ShellConfig for Zsh {
     }
     fn shell_unset_script(&self) -> &'static str {
         zsh::shell_unset_script()
+    }
+    fn needs_bin_path_in_init(&self) -> bool {
+        true
     }
 }
 
@@ -342,6 +364,37 @@ fn find_binary(name: &str) -> bool {
 
 // --- Profile injection -------------------------------------------------------
 
+/// Builds the content body of the `# gvm init` block.
+///
+/// For bash and zsh on non-Windows systems, prepends an `export PATH` line
+/// for the gvm binary directory so the block is self-sufficient even when
+/// sourced before the install dir is on PATH (e.g. Debian's `~/.profile`
+/// sources `~/.bashrc` before adding `~/.local/bin`).
+fn build_init_content(shell: &dyn ShellConfig, gvm_bin_dir: Option<&Path>) -> String {
+    if shell.needs_bin_path_in_init() {
+        #[cfg(not(target_os = "windows"))]
+        if let Some(dir) = gvm_bin_dir {
+            let path_expr = home_relative_path(dir);
+            return format!("export PATH=\"{path_expr}:$PATH\"\n{}", shell.init_line());
+        }
+    }
+    let _ = gvm_bin_dir;
+    shell.init_line().to_string()
+}
+
+/// Converts an absolute path to a `$HOME`-relative expression when the path
+/// is inside the user's home directory (e.g. `/home/jhon/.local/bin` becomes
+/// `$HOME/.local/bin`). Falls back to the absolute path string otherwise.
+#[cfg(not(target_os = "windows"))]
+fn home_relative_path(path: &Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(rel) = path.strip_prefix(&home) {
+            return format!("$HOME/{}", rel.display());
+        }
+    }
+    path.display().to_string()
+}
+
 /// Appends the `gvm env` hook and the shell wrapper function to the shell's
 /// profile file.
 ///
@@ -364,11 +417,13 @@ fn find_binary(name: &str) -> bool {
 ///
 /// Returns an error if the profile path cannot be determined, the file cannot
 /// be read, or the file cannot be written.
-pub fn inject_profile(shell: &dyn ShellConfig) -> Result<()> {
+pub fn inject_profile(shell: &dyn ShellConfig, gvm_bin_dir: Option<&Path>) -> Result<()> {
     use anyhow::Context;
 
     const INIT_MARKER: &str = "# gvm init";
     const WRAPPER_MARKER: &str = "# gvm wrapper";
+
+    let init_content = build_init_content(shell, gvm_bin_dir);
 
     let profile = shell
         .profile_path()
@@ -391,7 +446,7 @@ pub fn inject_profile(shell: &dyn ShellConfig) -> Result<()> {
     // When gvm is upgraded its init_line or wrapper may change; we replace
     // stale blocks rather than silently leaving old ones in place.
     if has_init && has_wrapper {
-        let expected_init = format!("{INIT_MARKER}\n{}\n", shell.init_line());
+        let expected_init = format!("{INIT_MARKER}\n{init_content}\n");
         let expected_wrapper = format!("{WRAPPER_MARKER}\n{}\n", shell.wrapper_function());
         if existing.contains(&expected_init) && existing.contains(&expected_wrapper) {
             println!("  gvm hook already configured in {}", profile.display());
@@ -410,7 +465,7 @@ pub fn inject_profile(shell: &dyn ShellConfig) -> Result<()> {
                     .map(|i| i + 1)
                     .unwrap_or(after_marker.len());
                 let end = marker_pos + INIT_MARKER.len() + block_len;
-                let new_block = format!("{INIT_MARKER}\n{}\n", shell.init_line());
+                let new_block = format!("{INIT_MARKER}\n{init_content}\n");
                 content = format!("{}{}{}", &content[..marker_pos], new_block, &content[end..]);
             }
             println!("  Updated init hook in {}", profile.display());
@@ -445,7 +500,7 @@ pub fn inject_profile(shell: &dyn ShellConfig) -> Result<()> {
         if !content.is_empty() {
             content.push_str("\n\n");
         }
-        content.push_str(&format!("{INIT_MARKER}\n{}\n", shell.init_line()));
+        content.push_str(&format!("{INIT_MARKER}\n{init_content}\n"));
         println!("  Added init hook to {}", profile.display());
         changed = true;
     } else {
@@ -657,8 +712,10 @@ mod tests {
         let has_init = src.contains(INIT_MARKER);
         let has_wrapper = src.contains(WRAPPER_MARKER);
 
+        let init_content = build_init_content(shell, None);
+
         if has_init && has_wrapper {
-            let expected_init = format!("{INIT_MARKER}\n{}\n", shell.init_line());
+            let expected_init = format!("{INIT_MARKER}\n{init_content}\n");
             let expected_wrapper = format!("{WRAPPER_MARKER}\n{}\n", shell.wrapper_function());
             if src.contains(&expected_init) && src.contains(&expected_wrapper) {
                 return src;
@@ -670,7 +727,7 @@ mod tests {
                     let end = pos
                         + INIT_MARKER.len()
                         + after.find("\n# gvm ").map(|i| i + 1).unwrap_or(after.len());
-                    let new_block = format!("{INIT_MARKER}\n{}\n", shell.init_line());
+                    let new_block = format!("{INIT_MARKER}\n{init_content}\n");
                     content = format!("{}{}{}", &content[..pos], new_block, &content[end..]);
                 }
             }
@@ -691,7 +748,7 @@ mod tests {
             if !content.is_empty() {
                 content.push_str("\n\n");
             }
-            content.push_str(&format!("{INIT_MARKER}\n{}\n", shell.init_line()));
+            content.push_str(&format!("{INIT_MARKER}\n{init_content}\n"));
         }
         if !has_wrapper {
             content.push_str(&format!(
