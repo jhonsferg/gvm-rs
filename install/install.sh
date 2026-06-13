@@ -76,7 +76,7 @@ step "Installing gvm $GVM_VERSION"
 # -- 4. Download binary --------------------------------------------------------
 BINARY="gvm-$PLATFORM-$ARCH"
 URL="$DL_BASE/$REPO/releases/download/$GVM_VERSION/$BINARY"
-TMP_FILE="$(mktemp /tmp/gvm-install.XXXXXX)"
+TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/gvm-install.XXXXXX")"
 
 trap 'rm -f "$TMP_FILE"' EXIT INT TERM
 
