@@ -1,4 +1,6 @@
 [target.aarch64-linux-android]
 pre-build = [
-  "find /android-ndk/toolchains/llvm/prebuilt -path '*/linux/aarch64/libunwind.a' -exec cp {} /android-ndk/lib/gcc/aarch64-linux-android/4.9.x/libunwind.a \\;"
+  "printf 'void _Unwind_Resume(void*e){}\\nlong _Unwind_GetIP(void*c){return 0;}\\nlong _Unwind_GetIPInfo(void*c,int*b){return 0;}\\nvoid*_Unwind_GetLanguageSpecificData(void*c){return 0;}\\nlong _Unwind_GetRegionStart(void*c){return 0;}\\nvoid _Unwind_SetGR(void*c,int r,long v){}\\nvoid _Unwind_SetIP(void*c,long v){}' > /tmp/u.c",
+  "aarch64-linux-android-clang -c /tmp/u.c -o /tmp/u.o",
+  "ar rcs /android-ndk/lib/gcc/aarch64-linux-android/4.9.x/libunwind.a /tmp/u.o"
 ]
