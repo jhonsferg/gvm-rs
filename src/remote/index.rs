@@ -20,11 +20,12 @@ const GO_DL_API: &str = "https://go.dev/dl/?mode=json&include=all";
 /// Returns an error if the HTTP request fails or if the response body cannot
 /// be deserialised as JSON.
 pub fn fetch_releases() -> Result<Vec<Release>> {
-    http::client()?
+    http::agent()?
         .get(GO_DL_API)
-        .send()
+        .call()
         .context("Failed to reach go.dev - check your internet connection")?
-        .json::<Vec<Release>>()
+        .body_mut()
+        .read_json::<Vec<Release>>()
         .context("Failed to parse Go releases JSON")
 }
 
