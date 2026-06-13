@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use std::path::Path;
 
-use crate::archive::download;
+use crate::{archive::download, http};
 
 /// GitHub repository slug used to build the Releases API URL.
 const REPO: &str = "jhonsferg/gvm";
@@ -62,9 +62,8 @@ pub fn run(force: bool) -> Result<()> {
     println!("{} Checking for updates...", "->".cyan());
 
     let api_url = format!("{}/repos/{REPO}/releases/latest", api_base());
-    let response = reqwest::blocking::Client::new()
+    let response = http::client()?
         .get(&api_url)
-        .header("User-Agent", format!("gvm/{current}"))
         .send()
         .context("Failed to reach GitHub API - check your internet connection")?;
 
