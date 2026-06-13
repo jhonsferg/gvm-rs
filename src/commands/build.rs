@@ -163,7 +163,13 @@ pub fn run(
     );
     println!();
 
-    let compiled = compile(&source_root, &bootstrap.path, no_cgo, env_vars);
+    let compiled = compile(
+        &source_root,
+        &bootstrap.path,
+        no_cgo,
+        env_vars,
+        &config.tmp_dir(),
+    );
     cleanup_bootstrap(&bootstrap);
 
     if let Err(e) = compiled {
@@ -332,13 +338,26 @@ fn cleanup_bootstrap(b: &Bootstrap) {
 /// Uses `src/make.bash` on Unix and `src/make.bat` on Windows. Both scripts
 /// must be invoked from the `src/` subdirectory. Build output is streamed
 /// directly to the terminal. Returns an error if the script exits non-zero.
+///
+/// `gvm_tmp` is the gvm scratch directory (`~/.gvm/tmp/`). A process-unique
+/// subdirectory is created there and passed as `TEMP`/`TMP`/`TMPDIR` to the
+/// build process so that Go's intermediate artifacts never leave `~/.gvm/`.
+/// This directory is removed when the build finishes, whether it succeeds or
+/// fails.
 fn compile(
     source_root: &Path,
     bootstrap_path: &Path,
     no_cgo: bool,
     env_vars: &[String],
+    gvm_tmp: &Path,
 ) -> Result<()> {
     let src_dir = source_root.join("src");
+
+    // Unique scratch dir for Go's intermediate build artifacts (*.a, a.out.exe…).
+    // Keeping it inside ~/.gvm/ means users need only one antivirus exclusion.
+    let build_tmp = gvm_tmp.join(format!("go-build-{}", std::process::id()));
+    std::fs::create_dir_all(&build_tmp)
+        .context("Failed to create build scratch directory inside .gvm/tmp")?;
 
     #[cfg(windows)]
     let (script_name, mut cmd) = {
@@ -373,6 +392,20 @@ fn compile(
     cmd.current_dir(&src_dir);
     cmd.env("GOROOT_BOOTSTRAP", bootstrap_path);
 
+    // Redirect Go's own temp dir into ~/.gvm/tmp/go-build-{pid}/ so that all
+    // intermediate compiled executables stay inside .gvm/ rather than the OS
+    // temp directory. On Windows this avoids antivirus interference with
+    // freshly-compiled binaries written to %TEMP%.
+    #[cfg(windows)]
+    {
+        cmd.env("TEMP", &build_tmp);
+        cmd.env("TMP", &build_tmp);
+    }
+    #[cfg(not(windows))]
+    {
+        cmd.env("TMPDIR", &build_tmp);
+    }
+
     if no_cgo {
         cmd.env("CGO_ENABLED", "0");
     }
@@ -394,7 +427,35 @@ fn compile(
         .wait()
         .context("Build process was interrupted")?;
 
+    // Remove intermediate build artifacts regardless of outcome.
+    let _ = std::fs::remove_dir_all(&build_tmp);
+
     if !status.success() {
+        #[cfg(windows)]
+        {
+            let gvm_root = gvm_tmp.parent().unwrap_or(gvm_tmp);
+            println!();
+            println!(
+                "  {} Build failed. If the output above contains 'Access denied' or",
+                "!".yellow()
+            );
+            println!("    'Acceso denegado', your antivirus is blocking intermediate");
+            println!("    executables compiled during the build.");
+            println!();
+            println!(
+                "  {} All gvm build artifacts are written exclusively inside:",
+                "i".cyan()
+            );
+            println!("      {}", gvm_root.display());
+            println!();
+            println!(
+                "  {} Add that directory as an exclusion in your antivirus:",
+                "->".cyan()
+            );
+            println!("    Windows Security -> Virus & threat protection ->");
+            println!("    Manage settings -> Exclusions -> Add an exclusion -> Folder");
+            println!("    Then retry: gvm build <version>");
+        }
         anyhow::bail!(
             "Build failed with exit code {}.",
             status.code().unwrap_or(-1)
