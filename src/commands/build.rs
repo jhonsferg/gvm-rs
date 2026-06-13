@@ -215,10 +215,11 @@ fn resolve_bootstrap(
     // Explicit --bootstrap flag.
     if let Some(spec_str) = bootstrap_spec {
         let spec = VersionSpec::parse(spec_str)?;
-        let bv = toolchain::resolve_installed(config, &spec).with_context(|| {
-            format!(
+        let bv = toolchain::resolve_installed(config, &spec).map_err(|_| {
+            anyhow!(
                 "Bootstrap version '{}' is not installed. Run 'gvm install {}' first.",
-                spec_str, spec_str
+                spec_str,
+                spec_str
             )
         })?;
         return Ok(Bootstrap {
