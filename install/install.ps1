@@ -37,7 +37,7 @@ Write-Host ""
 $isArm = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture `
          -eq [System.Runtime.InteropServices.Architecture]::Arm64
 
-$Arch = if ($isArm) { "aarch64" } else { "x86_64" }
+$Arch = if ($isArm) { "arm64" } else { "x86_64" }
 
 if (-not [System.Environment]::Is64BitOperatingSystem) {
     Abort "32-bit Windows is not supported."
@@ -59,37 +59,55 @@ if ($Version -eq "latest") {
 
 Write-Step "Installing gvm $Version"
 
-# -- 3. Download binary --------------------------------------------------------
-$BinaryName  = "gvm-windows-$Arch.exe"
-$DownloadUrl = "$DlBase/$REPO/releases/download/$Version/$BinaryName"
-$TmpFile     = [System.IO.Path]::Combine(
+# -- 3. Download archive -------------------------------------------------------
+$ArchiveName = "gvm_windows_$Arch.zip"
+$DownloadUrl = "$DlBase/$REPO/releases/download/$Version/$ArchiveName"
+$TmpZip      = [System.IO.Path]::Combine(
                    [System.IO.Path]::GetTempPath(),
-                   "gvm-install-$([System.Guid]::NewGuid()).exe"
+                   "gvm-install-$([System.Guid]::NewGuid()).zip"
                )
 
-Write-Step "Downloading $BinaryName from $DownloadUrl..."
+Write-Step "Downloading $ArchiveName from $DownloadUrl..."
 
 try {
     $ProgressPreference = "SilentlyContinue"
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $TmpFile -UseBasicParsing
+    Invoke-WebRequest -Uri $DownloadUrl -OutFile $TmpZip -UseBasicParsing
 }
 catch {
-    if (Test-Path $TmpFile) { Remove-Item -Force $TmpFile }
+    if (Test-Path $TmpZip) { Remove-Item -Force $TmpZip }
     Abort "Download failed.`n  URL: $DownloadUrl`n  Error: $_"
 }
 
-# -- 4. Install binary ---------------------------------------------------------
+# -- 4. Extract and install binary ---------------------------------------------
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 }
 
-$Dest = Join-Path $InstallDir "gvm.exe"
+$Dest       = Join-Path $InstallDir "gvm.exe"
+$TmpExtract = [System.IO.Path]::Combine(
+                  [System.IO.Path]::GetTempPath(),
+                  "gvm-install-extract-$([System.Guid]::NewGuid())"
+              )
 
-if (Test-Path $Dest) {
-    Remove-Item -Force $Dest -ErrorAction SilentlyContinue
+Write-Step "Extracting..."
+
+try {
+    Expand-Archive -Path $TmpZip -DestinationPath $TmpExtract -Force
+    $ExtractedExe = Join-Path $TmpExtract "gvm.exe"
+    if (-not (Test-Path $ExtractedExe)) {
+        Abort "Archive did not contain gvm.exe"
+    }
+    if (Test-Path $Dest) { Remove-Item -Force $Dest -ErrorAction SilentlyContinue }
+    Move-Item -Force $ExtractedExe $Dest
+}
+catch {
+    Abort "Extraction failed: $_"
+}
+finally {
+    if (Test-Path $TmpExtract) { Remove-Item -Recurse -Force $TmpExtract -ErrorAction SilentlyContinue }
+    if (Test-Path $TmpZip)     { Remove-Item -Force $TmpZip -ErrorAction SilentlyContinue }
 }
 
-Move-Item -Force $TmpFile $Dest
 Write-Ok "Installed to $Dest"
 
 try {
