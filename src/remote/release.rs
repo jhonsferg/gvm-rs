@@ -66,4 +66,12 @@ impl Release {
             .iter()
             .find(|f| f.os == os && f.arch == arch && f.kind == "archive")
     }
+
+    /// Returns the source tarball file for this release, if available.
+    ///
+    /// Source files have `kind == "source"` and carry empty `os` and `arch`
+    /// fields because they are platform-independent.
+    pub fn source_file(&self) -> Option<&ReleaseFile> {
+        self.files.iter().find(|f| f.kind == "source")
+    }
 }
