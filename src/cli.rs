@@ -22,6 +22,51 @@ pub struct Cli {
 /// All subcommands exposed by `gvm`.
 #[derive(Subcommand)]
 pub enum Command {
+    /// Compile a Go version from source and install it.
+    ///
+    /// Downloads the official Go source tarball from go.dev, locates a
+    /// bootstrap compiler (or downloads one temporarily), then runs
+    /// `src/make.bash` to produce a fully functional toolchain installed into
+    /// `~/.gvm/versions/go<X>.<Y>.<Z>/`.
+    ///
+    /// # Examples
+    ///
+    /// ```text
+    /// gvm build 1.25.0
+    /// gvm build 1.25.0 --no-cgo
+    /// gvm build 1.25.0 --bootstrap 1.22.6
+    /// gvm build 1.25.0 --env GOAMD64=v3 --env CC=clang
+    /// ```
+    ///
+    /// **Note**: building from source takes 5-15 minutes and requires ~3 GB of
+    /// disk space. Windows support is planned for a future release.
+    Build {
+        /// Version spec to build: an exact version (`1.22.4`), a minor range
+        /// (`1.22`), or the keyword `latest`.
+        version: String,
+
+        /// Rebuild even if already installed.
+        #[arg(long, short = 'f')]
+        force: bool,
+
+        /// Disable CGO during compilation (`CGO_ENABLED=0`).
+        #[arg(long)]
+        no_cgo: bool,
+
+        /// Bootstrap Go version to use as the host compiler.
+        ///
+        /// Must be installed via `gvm install`. Defaults to the highest
+        /// installed version; downloads a temporary bootstrap if none exists.
+        #[arg(long, value_name = "VERSION")]
+        bootstrap: Option<String>,
+
+        /// Set an environment variable for the build (e.g. `GOAMD64=v3`).
+        ///
+        /// May be repeated: `--env GOAMD64=v3 --env CC=clang`.
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env_vars: Vec<String>,
+    },
+
     /// Install a Go version (e.g. `gvm install 1.22.4` or `gvm install latest`).
     Install {
         /// Version spec to install: an exact version (`1.22.4`), a minor range
