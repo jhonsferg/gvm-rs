@@ -34,6 +34,7 @@ gvm is a Go version manager built from scratch in Rust. It was designed with a s
 ## 🚀 Features
 
 - 📥 **Install any Go version** - by exact version, minor range, or `latest`
+- 🔨 **Build from source** - compile any Go version from the official source tarball with automatic bootstrap detection
 - 🌍 **Global default** - set a system-wide version with `gvm use`
 - 📌 **Per-project pinning** - drop a `.go-version` file; gvm activates it automatically
 - 🔐 **SHA-256 verification** - every download is checked against go.dev's official checksum
@@ -118,6 +119,52 @@ gvm install 1.22            # 🔢 latest patch of Go 1.22
 gvm install 1.22.4          # 🎯 exact version
 gvm install 1.22.4 --force  # 🔄 reinstall even if already present
 ```
+
+---
+
+### 🔨 `gvm build <version>`
+
+Compiles a Go release directly from the official source tarball (`go<X>.<Y>.<Z>.src.tar.gz`). The resulting toolchain is installed into `~/.gvm/versions/` alongside any binaries installed with `gvm install`.
+
+> **Platform note:** Linux and macOS only. Windows support is planned for a future release.
+
+```sh
+gvm build 1.24.0               # build an exact release
+gvm build 1.24                 # build the latest patch of Go 1.24
+gvm build latest               # build the latest stable release
+gvm build 1.24.0 --force       # rebuild even if already installed
+```
+
+**Disable CGO** (faster build, no C toolchain needed):
+
+```sh
+gvm build 1.24.0 --no-cgo
+```
+
+**Set a custom bootstrap compiler** (must be already installed via gvm):
+
+```sh
+gvm build 1.24.0 --bootstrap 1.22.6
+```
+
+**Pass extra environment variables** to `make.bash`:
+
+```sh
+gvm build 1.24.0 --env GOAMD64=v3
+gvm build 1.24.0 --env GOAMD64=v3 --env CC=clang
+```
+
+#### Bootstrap compiler
+
+Go has been self-hosted since version 1.5 - compiling it from source requires a working Go installation as a bootstrap compiler. `gvm build` resolves one automatically:
+
+1. **`--bootstrap <version>`** - use a specific installed version (must be present via `gvm install`)
+2. **Highest installed gvm version** - reused with no extra download
+3. **Auto-download** - if no Go version is installed at all, gvm downloads the latest patch of the previous minor as a temporary bootstrap and removes it after the build
+
+#### Time and disk requirements
+
+Building Go from source takes **5-15 minutes** and requires approximately **3 GB** of free disk space for the source tree, build artifacts, and final installation.
 
 ---
 
