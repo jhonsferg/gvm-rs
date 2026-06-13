@@ -2,7 +2,8 @@
 //!
 //! Unlike `gvm install` which downloads a precompiled binary, this command
 //! fetches the official Go source tarball from go.dev, locates or downloads a
-//! suitable bootstrap compiler, and runs `src/make.bash` to produce a fully
+//! suitable bootstrap compiler, and runs the platform build script
+//! (`src/make.bash` on Unix, `src/make.bat` on Windows) to produce a fully
 //! functional Go toolchain installed into `~/.gvm/versions/go<X>.<Y>.<Z>/`.
 //!
 //! # Steps
@@ -14,7 +15,7 @@
 //!    or a temporarily downloaded previous-minor release).
 //! 5. Download and verify the source tarball.
 //! 6. Extract to a unique staging directory.
-//! 7. Run `src/make.bash` with `GOROOT_BOOTSTRAP` and any user-supplied env vars.
+//! 7. Run the build script with `GOROOT_BOOTSTRAP` and any user-supplied env vars.
 //! 8. Move the compiled tree to `~/.gvm/versions/<tag>/`.
 //! 9. Clean up staging and temporary bootstrap directories.
 
@@ -49,13 +50,6 @@ pub fn run(
     bootstrap_spec: Option<&str>,
     env_vars: &[String],
 ) -> Result<()> {
-    if cfg!(windows) {
-        anyhow::bail!(
-            "'gvm build' is not yet supported on Windows. \
-             Use 'gvm install' to install a precompiled binary."
-        );
-    }
-
     config.ensure_dirs()?;
 
     // Resolve version against the remote index.
@@ -324,28 +318,50 @@ fn cleanup_bootstrap(b: &Bootstrap) {
     }
 }
 
-/// Runs `src/make.bash` inside `source_root` with the supplied environment.
+/// Runs the Go build script inside `source_root` with the supplied environment.
 ///
-/// Build output is streamed directly to the terminal so the user can see
-/// progress. Returns an error if the script exits with a non-zero status.
+/// Uses `src/make.bash` on Unix and `src/make.bat` on Windows. Both scripts
+/// must be invoked from the `src/` subdirectory. Build output is streamed
+/// directly to the terminal. Returns an error if the script exits non-zero.
 fn compile(
     source_root: &Path,
     bootstrap_path: &Path,
     no_cgo: bool,
     env_vars: &[String],
 ) -> Result<()> {
-    let script = source_root.join("src").join("make.bash");
-    if !script.exists() {
-        anyhow::bail!(
-            "Build script not found at {}. The source archive may be corrupt.",
-            script.display()
-        );
-    }
+    let src_dir = source_root.join("src");
 
-    let mut cmd = std::process::Command::new("bash");
-    cmd.arg(&script);
-    // make.bash checks for run.bash in the current directory, so it must run from src/.
-    cmd.current_dir(source_root.join("src"));
+    #[cfg(windows)]
+    let (script_name, mut cmd) = {
+        let script = src_dir.join("make.bat");
+        if !script.exists() {
+            anyhow::bail!(
+                "Build script not found at {}. The source archive may be corrupt.",
+                script.display()
+            );
+        }
+        let mut c = std::process::Command::new("cmd.exe");
+        c.args(["/c", script.to_str().unwrap_or("make.bat")]);
+        ("make.bat", c)
+    };
+
+    #[cfg(not(windows))]
+    let (script_name, mut cmd) = {
+        let script = src_dir.join("make.bash");
+        if !script.exists() {
+            anyhow::bail!(
+                "Build script not found at {}. The source archive may be corrupt.",
+                script.display()
+            );
+        }
+        let mut c = std::process::Command::new("bash");
+        c.arg(&script);
+        ("make.bash", c)
+    };
+
+    // Both make.bash and make.bat check for sibling files to verify they are
+    // running from the correct directory.
+    cmd.current_dir(&src_dir);
     cmd.env("GOROOT_BOOTSTRAP", bootstrap_path);
 
     if no_cgo {
@@ -365,7 +381,7 @@ fn compile(
 
     let status = cmd
         .spawn()
-        .context("Failed to start build script. Is 'bash' available in PATH?")?
+        .with_context(|| format!("Failed to start {script_name}"))?
         .wait()
         .context("Build process was interrupted")?;
 

@@ -140,9 +140,7 @@ gvm install 1.22.4 --force  # 🔄 reinstall even if already present
 
 ### 🔨 `gvm build <version>`
 
-Compiles a Go release directly from the official source tarball (`go<X>.<Y>.<Z>.src.tar.gz`). The resulting toolchain is installed into `~/.gvm/versions/` alongside any binaries installed with `gvm install`.
-
-> **Platform note:** Linux and macOS only. Windows support is planned for a future release.
+Compiles a Go release directly from the official source tarball (`go<X>.<Y>.<Z>.src.tar.gz`). The resulting toolchain is installed into `~/.gvm/versions/` alongside any binaries installed with `gvm install`. Uses `src/make.bash` on Linux/macOS and `src/make.bat` on Windows.
 
 ```sh
 gvm build 1.24.0               # build an exact release

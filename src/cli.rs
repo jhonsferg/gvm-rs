@@ -25,8 +25,9 @@ pub enum Command {
     /// Compile a Go version from source and install it.
     ///
     /// Downloads the official Go source tarball from go.dev, locates a
-    /// bootstrap compiler (or downloads one temporarily), then runs
-    /// `src/make.bash` to produce a fully functional toolchain installed into
+    /// bootstrap compiler (or downloads one temporarily), then runs the
+    /// platform build script (`src/make.bash` on Unix, `src/make.bat` on
+    /// Windows) to produce a fully functional toolchain installed into
     /// `~/.gvm/versions/go<X>.<Y>.<Z>/`.
     ///
     /// # Examples
@@ -39,7 +40,7 @@ pub enum Command {
     /// ```
     ///
     /// **Note**: building from source takes 5-15 minutes and requires ~3 GB of
-    /// disk space. Windows support is planned for a future release.
+    /// disk space.
     Build {
         /// Version spec to build: an exact version (`1.22.4`), a minor range
         /// (`1.22`), or the keyword `latest`.
