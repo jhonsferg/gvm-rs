@@ -162,7 +162,7 @@ jobs:
           rm -f Cargo.toml.bak
           # Cargo.lock - stateful perl: set flag on name = "gvm", replace version on next line.
           # \r? makes the pattern work on both LF (Linux/macOS) and CRLF (Windows checkout).
-          perl -i.bak -pe 'if (/^name = "gvm"\r?$/) { $f=1 } elsif ($f) { s/^version = "[^"]*"/version = "'"${VERSION}"'"/; $f=0 }' Cargo.lock
+          perl -i.bak -pe 'if (/^name = "gvm-rs"\r?$/) { $f=1 } elsif ($f) { s/^version = "[^"]*"/version = "'"${VERSION}"'"/; $f=0 }' Cargo.lock
           rm -f Cargo.lock.bak
           echo "Version set to ${VERSION}"
           grep '^version' Cargo.toml
