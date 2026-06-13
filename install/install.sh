@@ -52,6 +52,13 @@ case "$OS" in
     *)      die "Unsupported OS: $OS  (only Linux and macOS are supported)" ;;
 esac
 
+# Termux (Android) ships a Linux kernel but musl binaries cannot use Android's
+# DNS resolver. Detect Termux and switch to the dedicated android binary which
+# is linked against bionic and uses Android DNS natively.
+if [ "$PLATFORM" = "linux" ] && { [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; }; then
+    PLATFORM="android"
+fi
+
 MACHINE="$(uname -m 2>/dev/null || echo unknown)"
 case "$MACHINE" in
     x86_64 | amd64)             ARCH="x86_64"  ;;
@@ -63,6 +70,10 @@ case "$MACHINE" in
     ppc64le)                    ARCH="ppc64le" ;;
     *)                          die "Unsupported architecture: $MACHINE" ;;
 esac
+
+if [ "$PLATFORM" = "android" ] && [ "$ARCH" != "aarch64" ]; then
+    die "Termux is only supported on aarch64 devices. Detected arch: $ARCH"
+fi
 
 step "Detected platform: $PLATFORM-$ARCH"
 

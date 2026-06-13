@@ -150,6 +150,8 @@ fn release_archive_name() -> String {
         "windows"
     } else if cfg!(target_os = "macos") {
         "darwin"
+    } else if cfg!(target_os = "android") {
+        "android"
     } else {
         "linux"
     };
