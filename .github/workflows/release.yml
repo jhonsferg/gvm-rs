@@ -50,7 +50,15 @@ jobs:
             archive_type: tar
             use_cross: true
 
-          # ── Linux armv7 - static musl (cross + Docker, Termux/Android) ───────
+          # ── Android aarch64 - bionic libc (Termux) ───────────────────────────
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+            binary_name: gvm
+            artifact_archive: gvm_android_aarch64.tar.gz
+            archive_type: tar
+            use_cross: true
+
+          # ── Linux armv7 - static musl (cross + Docker) ───────────────────────
           - os: ubuntu-latest
             target: armv7-unknown-linux-musleabihf
             binary_name: gvm
