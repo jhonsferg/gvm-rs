@@ -10,6 +10,7 @@ mod cli;
 mod commands;
 mod config;
 mod fs;
+mod http;
 mod remote;
 mod shell;
 mod toolchain;
@@ -24,7 +25,7 @@ use config::Config;
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("{} {e}", "error:".red().bold());
+        eprintln!("{} {e:#}", "error:".red().bold());
         std::process::exit(1);
     }
 }
