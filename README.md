@@ -2,16 +2,30 @@
 
 <img src="assets/images/ferris-and-gopher.png" alt="Ferris and Gopher" width="180" />
 
-# 🐹 gvm - Go Version Manager
+# gvm - Go Version Manager
 
 **A fast, cross-platform Go version manager written in Rust.**
 Install, switch, and pin any Go release - no `sudo`, no system dependencies, no fuss.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/built_with-Rust-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![Platform](https://img.shields.io/badge/platform-Windows_%7C_Linux_%7C_macOS-brightgreen?style=flat-square&logo=github)](https://github.com/jhonsferg/gvm/releases)
-[![Version](https://img.shields.io/badge/version-1.2.0-blueviolet?style=flat-square)](https://github.com/jhonsferg/gvm/releases/tag/v1.2.0)
-[![TLS](<https://img.shields.io/badge/TLS-rustls_(no_OpenSSL)-lightgrey?style=flat-square&logo=letsencrypt>)](https://github.com/rustls/rustls)
+[![Release](https://img.shields.io/github/v/release/jhonsferg/gvm?style=for-the-badge&logo=github&label=Release&color=blueviolet)](https://github.com/jhonsferg/gvm/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/jhonsferg/gvm/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/jhonsferg/gvm/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
+
+[![Rust](https://img.shields.io/badge/Built_with-Rust-orange?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![TLS](https://img.shields.io/badge/TLS-rustls_%28no_OpenSSL%29-lightgrey?style=for-the-badge&logo=letsencrypt&logoColor=white)](https://github.com/rustls/rustls)
+
+[![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/jhonsferg/gvm/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+[![Android](https://img.shields.io/badge/Android_%28Termux%29-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+
+[![x86_64](https://img.shields.io/badge/x86__64-555555?style=for-the-badge&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+[![ARM64](https://img.shields.io/badge/ARM64-0091BD?style=for-the-badge&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+[![ARMv7](https://img.shields.io/badge/ARMv7-0091BD?style=for-the-badge&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+[![386](https://img.shields.io/badge/386-555555?style=for-the-badge&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+[![riscv64](https://img.shields.io/badge/RISC--V_64-2C3E50?style=for-the-badge&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+[![s390x](https://img.shields.io/badge/s390x-1F3A8A?style=for-the-badge&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
+[![ppc64le](https://img.shields.io/badge/ppc64le-1F3A8A?style=for-the-badge&logoColor=white)](https://github.com/jhonsferg/gvm/releases/latest)
 
 </div>
 
