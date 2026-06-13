@@ -21,12 +21,18 @@
 
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::collections::VecDeque;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use crate::{
     archive::{download, extract},
     config::Config,
-    fs as gvm_fs,
+    fs as gvm_fs, http,
     remote::{index, release::Release},
     toolchain,
     user_version::VersionSpec,
@@ -157,10 +163,13 @@ pub fn run(
     }
 
     println!("{} Compiling Go {}...", "->".cyan(), version.tag().bold());
-    println!(
-        "  {} Build output follows. This will take several minutes.",
-        "i".cyan()
-    );
+    if !http::is_verbose() {
+        println!(
+            "  {} This will take 5-15 minutes. Run with {} to see build output.",
+            "i".yellow(),
+            "-v".cyan()
+        );
+    }
     println!();
 
     let compiled = compile(
@@ -335,15 +344,16 @@ fn cleanup_bootstrap(b: &Bootstrap) {
 
 /// Runs the Go build script inside `source_root` with the supplied environment.
 ///
-/// Uses `src/make.bash` on Unix and `src/make.bat` on Windows. Both scripts
-/// must be invoked from the `src/` subdirectory. Build output is streamed
-/// directly to the terminal. Returns an error if the script exits non-zero.
+/// A live spinner tracks elapsed time and updates its label as build phases
+/// are detected from the output. In verbose mode every line from stdout/stderr
+/// is printed with a `│ ` prefix so the user can watch exactly what the build
+/// system is doing. In quiet mode the output is buffered and only shown if the
+/// build fails, making it easy to diagnose errors without cluttering the
+/// normal flow.
 ///
 /// `gvm_tmp` is the gvm scratch directory (`~/.gvm/tmp/`). A process-unique
-/// subdirectory is created there and passed as `TEMP`/`TMP`/`TMPDIR` to the
-/// build process so that Go's intermediate artifacts never leave `~/.gvm/`.
-/// This directory is removed when the build finishes, whether it succeeds or
-/// fails.
+/// subdirectory is created there and passed as `TEMP`/`TMP`/`TMPDIR` so that
+/// Go's intermediate artifacts never leave `~/.gvm/`.
 fn compile(
     source_root: &Path,
     bootstrap_path: &Path,
@@ -353,8 +363,6 @@ fn compile(
 ) -> Result<()> {
     let src_dir = source_root.join("src");
 
-    // Unique scratch dir for Go's intermediate build artifacts (*.a, a.out.exe…).
-    // Keeping it inside ~/.gvm/ means users need only one antivirus exclusion.
     let build_tmp = gvm_tmp.join(format!("go-build-{}", std::process::id()));
     std::fs::create_dir_all(&build_tmp)
         .context("Failed to create build scratch directory inside .gvm/tmp")?;
@@ -387,15 +395,9 @@ fn compile(
         ("make.bash", c)
     };
 
-    // Both make.bash and make.bat check for sibling files to verify they are
-    // running from the correct directory.
     cmd.current_dir(&src_dir);
     cmd.env("GOROOT_BOOTSTRAP", bootstrap_path);
 
-    // Redirect Go's own temp dir into ~/.gvm/tmp/go-build-{pid}/ so that all
-    // intermediate compiled executables stay inside .gvm/ rather than the OS
-    // temp directory. On Windows this avoids antivirus interference with
-    // freshly-compiled binaries written to %TEMP%.
     #[cfg(windows)]
     {
         cmd.env("TEMP", &build_tmp);
@@ -409,28 +411,101 @@ fn compile(
     if no_cgo {
         cmd.env("CGO_ENABLED", "0");
     }
-
     for kv in env_vars {
-        // Split on the first '=' only so values containing '=' are preserved.
         if let Some((key, val)) = kv.split_once('=') {
             cmd.env(key, val);
         }
     }
 
-    // Stream build output directly to the terminal.
-    cmd.stdout(std::process::Stdio::inherit());
-    cmd.stderr(std::process::Stdio::inherit());
+    // Always pipe both streams so we can show/buffer them.
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
 
-    let status = cmd
+    let mut child = cmd
         .spawn()
-        .with_context(|| format!("Failed to start {script_name}"))?
-        .wait()
-        .context("Build process was interrupted")?;
+        .with_context(|| format!("Failed to start {script_name}"))?;
 
-    // Remove intermediate build artifacts regardless of outcome.
+    let stdout_pipe = child.stdout.take().expect("stdout was piped");
+    let stderr_pipe = child.stderr.take().expect("stderr was piped");
+
+    // Merge stdout and stderr into a single channel so we process them in
+    // arrival order without risk of deadlocking on a full pipe buffer.
+    let (tx, rx) = mpsc::channel::<String>();
+    let tx2 = tx.clone();
+
+    let stdout_thread = thread::spawn(move || {
+        BufReader::new(stdout_pipe)
+            .lines()
+            .map_while(Result::ok)
+            .for_each(|l| {
+                tx.send(l).ok();
+            });
+    });
+    let stderr_thread = thread::spawn(move || {
+        BufReader::new(stderr_pipe)
+            .lines()
+            .map_while(Result::ok)
+            .for_each(|l| {
+                tx2.send(l).ok();
+            });
+    });
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("  {spinner:.cyan}  {msg}  {elapsed_precise}")
+            .unwrap(),
+    );
+    pb.set_message("Starting build...");
+    pb.enable_steady_tick(Duration::from_millis(120));
+
+    let verbose = http::is_verbose();
+    let mut tail: VecDeque<String> = VecDeque::with_capacity(100);
+
+    for line in rx {
+        // Update spinner label when a recognised phase marker appears.
+        if line.contains("Building C bootstrap") {
+            pb.set_message("Building C bootstrap tool...");
+        } else if line.contains("Building compilers") || line.contains("Building Go bootstrap") {
+            pb.set_message("Building Go compiler...");
+        } else if line.contains("Building packages") || line.contains("Building commands") {
+            pb.set_message("Building standard library...");
+        } else if line.contains("Installed Go for") || line.contains("Installed commands") {
+            pb.set_message("Finalizing...");
+        }
+
+        if verbose {
+            pb.println(format!("  {} {}", "│".dimmed(), line));
+        }
+
+        if tail.len() >= 100 {
+            tail.pop_front();
+        }
+        tail.push_back(line);
+    }
+
+    stdout_thread.join().ok();
+    stderr_thread.join().ok();
+
+    let status = child.wait().context("Build process was interrupted")?;
+    pb.finish_and_clear();
     let _ = std::fs::remove_dir_all(&build_tmp);
 
     if !status.success() {
+        // In quiet mode print the captured tail so the user can diagnose
+        // without re-running with -v.
+        if !verbose && !tail.is_empty() {
+            eprintln!();
+            eprintln!(
+                "  {} Build output (last {} lines):",
+                "!".yellow(),
+                tail.len()
+            );
+            for line in &tail {
+                eprintln!("  {} {}", "│".dimmed(), line);
+            }
+        }
+
         #[cfg(windows)]
         {
             let gvm_root = gvm_tmp.parent().unwrap_or(gvm_tmp);
@@ -456,6 +531,7 @@ fn compile(
             println!("    Manage settings -> Exclusions -> Add an exclusion -> Folder");
             println!("    Then retry: gvm build <version>");
         }
+
         anyhow::bail!(
             "Build failed with exit code {}.",
             status.code().unwrap_or(-1)
