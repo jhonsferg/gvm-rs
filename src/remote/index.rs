@@ -15,15 +15,28 @@ const GO_DL_API: &str = "https://go.dev/dl/?mode=json&include=all";
 /// The API returns both stable and unstable (RC/beta) releases; callers are
 /// responsible for filtering by [`Release::stable`] if needed.
 ///
+/// When `--verbose` is active, the request and response details are printed
+/// to stderr before the JSON body is parsed.
+///
 /// # Errors
 ///
 /// Returns an error if the HTTP request fails or if the response body cannot
 /// be deserialised as JSON.
 pub fn fetch_releases() -> Result<Vec<Release>> {
-    http::agent()?
+    http::log_request("GET", GO_DL_API);
+
+    let mut response = http::agent()?
         .get(GO_DL_API)
         .call()
-        .context("Failed to reach go.dev - check your internet connection")?
+        .context("Failed to reach go.dev - check your internet connection")?;
+
+    http::log_response(
+        response.status().as_u16(),
+        response.status().canonical_reason().unwrap_or(""),
+        response.headers(),
+    );
+
+    response
         .body_mut()
         .read_json::<Vec<Release>>()
         .context("Failed to parse Go releases JSON")
