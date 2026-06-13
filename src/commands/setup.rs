@@ -104,7 +104,10 @@ pub fn run(shell_str: Option<&str>, reset: bool) -> Result<()> {
     }
 
     // ---- Interactive profile: eval hook + wrapper ---------------------------
-    shell::inject_profile(sh.as_ref())?;
+    let gvm_bin_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::PathBuf::from));
+    shell::inject_profile(sh.as_ref(), gvm_bin_dir.as_deref())?;
 
     // ---- Login profile (Linux/macOS): static PATH for GUI apps --------------
     #[cfg(not(target_os = "windows"))]
