@@ -60,23 +60,21 @@ pub fn run(force: bool) -> Result<()> {
     println!("{} Checking for updates...", "->".cyan());
 
     let api_url = format!("{}/repos/{REPO}/releases/latest", api_base());
-    let response = http::client()?
-        .get(&api_url)
-        .send()
-        .context("Failed to reach GitHub API - check your internet connection")?;
-
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        anyhow::bail!(
+    let mut response = match http::agent()?.get(&api_url).call() {
+        Ok(r) => r,
+        Err(ureq::Error::StatusCode(404)) => anyhow::bail!(
             "No releases found for {REPO}. \
              The project may not have published a release yet."
-        );
-    }
-    if !response.status().is_success() {
-        anyhow::bail!("GitHub API returned HTTP {}", response.status());
-    }
+        ),
+        Err(e) => {
+            return Err(anyhow::anyhow!(e))
+                .context("Failed to reach GitHub API - check your internet connection")
+        }
+    };
 
     let release: GithubRelease = response
-        .json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse GitHub release response")?;
 
     let latest_tag = release.tag_name.trim_start_matches('v');

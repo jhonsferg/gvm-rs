@@ -29,6 +29,8 @@ pub fn env_script(ctx: &EnvContext<'_>) -> String {
 if ! (( $+functions[_gvm_hook] )); then
     _gvm_hook() {{
         [ -n "$GVM_SHELL_VERSION" ] && return
+        [ "$PWD" = "${{_GVM_PREV_PWD-}}" ] && return
+        export _GVM_PREV_PWD="$PWD"
         local p; p=$(gvm path 2>/dev/null)
         if [[ -n "$p" ]]; then
             export GOROOT="$(dirname "$p")"
@@ -38,6 +40,7 @@ if ! (( $+functions[_gvm_hook] )); then
     }}
     autoload -Uz add-zsh-hook
     add-zsh-hook chpwd _gvm_hook
+    add-zsh-hook precmd _gvm_hook
 fi"#,
         gvm_dir = gvm_dir,
         goroot_stmt = goroot_stmt,
@@ -102,6 +105,20 @@ mod tests {
         };
         let script = env_script(&ctx);
         assert!(script.contains("GVM_SHELL_VERSION"));
+    }
+
+    #[test]
+    fn zsh_hook_registered_to_precmd_for_startup() {
+        let ctx = EnvContext {
+            gvm_dir: Path::new("/home/user/.gvm"),
+            active_bin: None,
+            active_root: None,
+        };
+        let script = env_script(&ctx);
+        assert!(
+            script.contains("precmd"),
+            "env_script must register hook via precmd for startup detection"
+        );
     }
 
     #[test]

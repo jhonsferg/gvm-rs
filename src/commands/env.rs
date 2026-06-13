@@ -16,6 +16,7 @@ use crate::{
     config::Config,
     shell::{self, EnvContext},
     toolchain,
+    toolchain::VersionSource,
 };
 
 /// Prints the shell initialisation script for the active Go version.
@@ -36,15 +37,21 @@ pub fn run(config: &Config, shell_str: Option<&str>) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("Could not detect shell. Use --shell <name>."))?,
     };
 
-    let (active_bin, active_root) = toolchain::active_version(config)
-        .ok()
-        .and_then(|(v, _)| {
-            let bin = toolchain::version_bin_path(config, &v).ok()?;
-            let root = config.version_dir(&v.tag());
-            Some((bin, root))
-        })
-        .map(|(b, r)| (Some(b), Some(r)))
-        .unwrap_or((None, None));
+    let (active_bin, active_root) = match toolchain::active_version(config) {
+        Ok((v, src)) => match toolchain::version_bin_path(config, &v) {
+            Ok(bin) => (Some(bin), Some(config.version_dir(&v.tag()))),
+            Err(_) => {
+                if src == VersionSource::Local {
+                    eprintln!(
+                        "gvm: Go {} (from .go-version) is not installed. Run: gvm install {}",
+                        v, v
+                    );
+                }
+                (None, None)
+            }
+        },
+        Err(_) => (None, None),
+    };
 
     let ctx = EnvContext {
         gvm_dir: &config.root,

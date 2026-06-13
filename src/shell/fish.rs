@@ -27,10 +27,14 @@ pub fn env_script(ctx: &EnvContext<'_>) -> String {
         r#"set -gx GVM_DIR "{gvm_dir}"
 {goroot_stmt}{path_stmt}
 if not functions -q _gvm_hook
-    function _gvm_hook --on-variable PWD
+    function _gvm_hook --on-variable PWD --on-event fish_prompt
         if set -q GVM_SHELL_VERSION
             return
         end
+        if set -q _GVM_PREV_PWD; and test "$_GVM_PREV_PWD" = "$PWD"
+            return
+        end
+        set -g _GVM_PREV_PWD "$PWD"
         set -l p (gvm path 2>/dev/null)
         if test -n "$p"
             set -gx GOROOT (dirname $p)
@@ -84,6 +88,20 @@ mod tests {
     use super::*;
     use crate::shell::EnvContext;
     use std::path::Path;
+
+    #[test]
+    fn fish_hook_registered_to_fish_prompt_for_startup() {
+        let ctx = EnvContext {
+            gvm_dir: Path::new("/home/user/.gvm"),
+            active_bin: None,
+            active_root: None,
+        };
+        let script = env_script(&ctx);
+        assert!(
+            script.contains("fish_prompt"),
+            "env_script must register hook via fish_prompt for startup detection"
+        );
+    }
 
     #[test]
     fn hook_checks_gvm_shell_version() {

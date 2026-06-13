@@ -26,16 +26,12 @@ use std::path::Path;
 /// - `dest` cannot be created or written to.
 /// - The connection is interrupted before the download completes.
 pub fn fetch(url: &str, dest: &Path) -> Result<()> {
-    let response = http::client()?
+    let mut response = http::agent()?
         .get(url)
-        .send()
+        .call()
         .with_context(|| format!("Failed to connect to {url}"))?;
 
-    if !response.status().is_success() {
-        bail!("HTTP {} while downloading {url}", response.status());
-    }
-
-    let total = response.content_length().unwrap_or(0);
+    let total = response.body().content_length().unwrap_or(0);
     let pb = ProgressBar::new(total);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -47,7 +43,11 @@ pub fn fetch(url: &str, dest: &Path) -> Result<()> {
     let mut file = std::fs::File::create(dest)
         .with_context(|| format!("Cannot create file at {}", dest.display()))?;
 
-    std::io::copy(&mut pb.wrap_read(response), &mut file).context("Download interrupted")?;
+    std::io::copy(
+        &mut pb.wrap_read(response.body_mut().as_reader()),
+        &mut file,
+    )
+    .context("Download interrupted")?;
 
     pb.finish_and_clear();
     Ok(())

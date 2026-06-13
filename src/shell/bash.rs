@@ -29,6 +29,8 @@ pub fn env_script(ctx: &EnvContext<'_>) -> String {
 if ! declare -f _gvm_hook > /dev/null 2>&1; then
     _gvm_hook() {{
         [ -n "$GVM_SHELL_VERSION" ] && return
+        [ "$PWD" = "${{_GVM_PREV_PWD-}}" ] && return
+        export _GVM_PREV_PWD="$PWD"
         local p; p=$(gvm path 2>/dev/null)
         if [ -n "$p" ]; then
             export GOROOT="$(dirname "$p")"
@@ -37,6 +39,7 @@ if ! declare -f _gvm_hook > /dev/null 2>&1; then
         fi
     }}
     cd() {{ builtin cd "$@" && _gvm_hook; }}
+    PROMPT_COMMAND="_gvm_hook${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}"
 fi"#,
         gvm_dir = gvm_dir,
         goroot_stmt = goroot_stmt,
@@ -139,6 +142,36 @@ mod tests {
         assert!(
             guard_pos > hook_start && guard_pos < path_pos,
             "GVM_SHELL_VERSION guard must appear before gvm path call inside the hook"
+        );
+    }
+
+    #[test]
+    fn bash_shell_version_script_includes_bin_path() {
+        let bin = Path::new("/home/user/.gvm/versions/go1.23.4/bin");
+        let root = Path::new("/home/user/.gvm/versions/go1.23.4");
+        let ctx = EnvContext {
+            gvm_dir: Path::new("/home/user/.gvm"),
+            active_bin: Some(bin),
+            active_root: Some(root),
+        };
+        let script = env_script(&ctx);
+        assert!(
+            script.contains(bin.to_str().unwrap()),
+            "env_script must include the bin path in PATH export"
+        );
+    }
+
+    #[test]
+    fn bash_hook_registered_to_prompt_command() {
+        let ctx = EnvContext {
+            gvm_dir: Path::new("/home/user/.gvm"),
+            active_bin: None,
+            active_root: None,
+        };
+        let script = env_script(&ctx);
+        assert!(
+            script.contains("PROMPT_COMMAND"),
+            "env_script must register hook via PROMPT_COMMAND for startup detection"
         );
     }
 
