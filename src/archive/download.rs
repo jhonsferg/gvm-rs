@@ -6,6 +6,7 @@
 //! by go.dev.
 
 use anyhow::{bail, Context, Result};
+use crate::http;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -25,8 +26,10 @@ use std::path::Path;
 /// - `dest` cannot be created or written to.
 /// - The connection is interrupted before the download completes.
 pub fn fetch(url: &str, dest: &Path) -> Result<()> {
-    let response =
-        reqwest::blocking::get(url).with_context(|| format!("Failed to connect to {url}"))?;
+    let response = http::client()?
+        .get(url)
+        .send()
+        .with_context(|| format!("Failed to connect to {url}"))?;
 
     if !response.status().is_success() {
         bail!("HTTP {} while downloading {url}", response.status());

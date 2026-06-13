@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::{remote::release::Release, user_version::VersionSpec};
+use crate::{http, remote::release::Release, user_version::VersionSpec};
 
 /// URL of the go.dev download API that lists all releases.
 const GO_DL_API: &str = "https://go.dev/dl/?mode=json&include=all";
@@ -20,7 +20,9 @@ const GO_DL_API: &str = "https://go.dev/dl/?mode=json&include=all";
 /// Returns an error if the HTTP request fails or if the response body cannot
 /// be deserialised as JSON.
 pub fn fetch_releases() -> Result<Vec<Release>> {
-    reqwest::blocking::get(GO_DL_API)
+    http::client()?
+        .get(GO_DL_API)
+        .send()
         .context("Failed to reach go.dev - check your internet connection")?
         .json::<Vec<Release>>()
         .context("Failed to parse Go releases JSON")
