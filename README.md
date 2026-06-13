@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/images/ferris-and-gopher.png" alt="Ferris and Gopher" width="180" />
+
 # 🐹 gvm - Go Version Manager
 
 **A fast, cross-platform Go version manager written in Rust.**
