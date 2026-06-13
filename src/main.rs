@@ -40,6 +40,13 @@ fn run() -> anyhow::Result<()> {
     let config = Config::load()?;
 
     match cli.command {
+        Command::Build {
+            version,
+            force,
+            no_cgo,
+            bootstrap,
+            env_vars,
+        } => commands::build::run(&config, &version, force, no_cgo, bootstrap.as_deref(), &env_vars),
         Command::Install { version, force } => commands::install::run(&config, &version, force),
         Command::Use { version } => commands::use_version::run(&config, &version),
         Command::Default { version } => commands::default::run(&config, &version),
