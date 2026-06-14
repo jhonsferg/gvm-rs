@@ -277,6 +277,11 @@ fn fetch_parallel(
             let bar = mp.add(ProgressBar::new(size));
             bar.set_style(chunk_style.clone());
             bar.set_prefix(format!("#{:>2}", i + 1));
+            // Steady tick keeps chunk bars alive during HTTP connection setup
+            // (TCP + TLS + headers) when no bytes arrive for 1-2 s. Safe here
+            // because set_draw_target(hz(10)) above caps all tick threads to
+            // 10 combined redraws/s regardless of how many bars are ticking.
+            bar.enable_steady_tick(Duration::from_millis(100));
             bar
         })
         .collect();
