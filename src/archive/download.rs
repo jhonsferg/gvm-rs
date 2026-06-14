@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use sha2::{Digest, Sha256};
 
 use crate::http;
@@ -251,39 +251,51 @@ fn fetch_parallel(
     let chunk_size = total.div_ceil(connections as u64);
 
     let mp = MultiProgress::new();
+    // Cap redraws to 10 Hz. Without this, 8+ concurrent threads each calling
+    // bar.inc() can flood the terminal with partial renders on Windows.
+    mp.set_draw_target(ProgressDrawTarget::stderr_with_hz(10));
 
-    let total_bar = {
-        let bar = mp.add(ProgressBar::new(total));
-        bar.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "  [{bar:40.cyan/blue}] {bytes}/{total_bytes}  {bytes_per_sec}  eta {eta}",
-                )
-                .unwrap()
-                .progress_chars("=>-"),
-        );
-        bar.enable_steady_tick(Duration::from_millis(120));
-        bar
-    };
+    // Build the styles once, shared across all bars.
+    let chunk_style = ProgressStyle::default_bar()
+        .template("  {prefix:.dim}  [{bar:30.blue/dim}] {bytes}/{total_bytes}  {bytes_per_sec}")
+        .unwrap()
+        .progress_chars("=>-");
+    let total_style = ProgressStyle::default_bar()
+        .template("  [{bar:40.cyan/blue}] {bytes}/{total_bytes}  {bytes_per_sec}  eta {eta}")
+        .unwrap()
+        .progress_chars("=>-");
 
-    let handles: Vec<_> = (0..connections)
+    // Create ALL chunk bars with their styles set before any tick thread starts.
+    // This is critical: if the tick thread fires between ProgressBar::new() and
+    // set_style(), the bar renders with the default blocky style (░░░░).
+    // Chunk bars are added first so they appear above the total bar.
+    let chunk_bars: Vec<ProgressBar> = (0..connections)
         .map(|i| {
             let start = i as u64 * chunk_size;
             let end = (start + chunk_size).min(total) - 1;
             let size = end - start + 1;
-
-            let bar = mp.insert_before(&total_bar, ProgressBar::new(size));
+            let bar = mp.add(ProgressBar::new(size));
+            bar.set_style(chunk_style.clone());
             bar.set_prefix(format!("#{:>2}", i + 1));
-            bar.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "  {prefix:.dim}  [{bar:30.blue/dim}] {bytes}/{total_bytes}  {bytes_per_sec}",
-                    )
-                    .unwrap()
-                    .progress_chars("=>-"),
-            );
-            bar.enable_steady_tick(Duration::from_millis(120));
+            bar
+        })
+        .collect();
 
+    // Total bar is added last so it always renders at the bottom.
+    let total_bar = mp.add(ProgressBar::new(total));
+    total_bar.set_style(total_style);
+    // Enable steady_tick ONLY after all bars exist and have their styles set.
+    // Starting it earlier would race with bar creation above.
+    total_bar.enable_steady_tick(Duration::from_millis(200));
+
+    // Spawn one thread per chunk. Chunk bars are moved into the threads; the
+    // total_bar clone is Arc-backed, so sharing it is safe.
+    let handles: Vec<_> = chunk_bars
+        .into_iter()
+        .enumerate()
+        .map(|(i, bar)| {
+            let start = i as u64 * chunk_size;
+            let end = (start + chunk_size).min(total) - 1;
             let url = url.to_owned();
             let part = chunk_path(dest, Some(i));
             let total_bar = total_bar.clone();
@@ -308,7 +320,9 @@ fn fetch_parallel(
         }
     }
 
-    total_bar.finish_and_clear();
+    // Clear the entire panel at once. finish_and_clear on individual bars
+    // would leave orphaned lines on screen.
+    mp.clear().ok();
 
     if let Some(e) = first_err {
         for i in 0..connections {
@@ -358,18 +372,19 @@ fn download_chunk(
 
         match try_range(url, actual_start, end, part, existing > 0, &bar, &total_bar) {
             Ok(()) => {
-                bar.finish_with_message("done");
+                bar.finish();
                 return Ok(());
             }
             Err(e) => {
                 if attempt >= retries {
-                    bar.finish_with_message("failed");
+                    bar.finish();
                     return Err(e).context(format!(
                         "Chunk {start}-{end} failed after {retries} retries"
                     ));
                 }
                 attempt += 1;
-                bar.set_message(format!("retry {attempt}/{retries}"));
+                // Don't call bar.set_message() here: it triggers a redraw from
+                // the chunk thread which competes with the total_bar tick thread.
                 thread::sleep(Duration::from_secs(backoff(attempt)));
             }
         }
@@ -389,7 +404,13 @@ fn try_range(
     let range_hdr = format!("bytes={start}-{end}");
 
     if http::is_verbose() {
-        eprintln!("  {} > GET {} Range: {range_hdr}", "[v]".dimmed(), url);
+        // Route through total_bar.println so the MultiProgress panel absorbs
+        // the output. Direct eprintln!() would corrupt the bar rendering.
+        total_bar.println(format!(
+            "  {} > GET {} Range: {range_hdr}",
+            "[v]".dimmed(),
+            url
+        ));
     }
 
     let mut response = http::agent()?
@@ -402,12 +423,12 @@ fn try_range(
         .with_context(|| format!("Failed to fetch range {range_hdr}"))?;
 
     if http::is_verbose() {
-        eprintln!(
+        total_bar.println(format!(
             "  {} < {} {}",
             "[v]".dimmed(),
             response.status().as_u16().to_string().bold(),
             response.status().canonical_reason().unwrap_or("")
-        );
+        ));
     }
 
     let status = response.status().as_u16();
