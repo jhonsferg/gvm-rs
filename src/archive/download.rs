@@ -320,8 +320,9 @@ fn fetch_parallel(
         }
     }
 
-    // Clear the entire panel at once. finish_and_clear on individual bars
-    // would leave orphaned lines on screen.
+    // Stop the total_bar tick thread before clearing. Without this, the tick
+    // fires up to 200 ms after mp.clear() and redraws the panel.
+    total_bar.finish();
     mp.clear().ok();
 
     if let Some(e) = first_err {
