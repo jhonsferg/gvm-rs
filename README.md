@@ -40,7 +40,7 @@ gvm is a Go version manager built from scratch in Rust. It was designed with a s
 - **Zero system dependencies** - a single static binary is all you need.
 - **Truly cross-platform** - one codebase, one behavior across Windows, Linux, and macOS on both x86_64 and ARM64.
 - **SHA-256 verified downloads** - every archive is checked against go.dev's official checksum before extraction.
-- **Parallel downloads** - archives are split into chunks and fetched simultaneously over multiple connections (`-j 4` by default). Interrupted downloads resume automatically from the last byte.
+- **Fast, resumable downloads** - a single stream with a large read buffer to use as much of the link's throughput as possible. Interrupted downloads resume automatically from the last byte.
 - **Transparent build output** - `gvm build -v` streams every compiler line in real time so you always know what is happening.
 - **Session-scoped activation** - `gvm shell <version>` activates a version for the current terminal only, without touching any files.
 - **Full environment setup** - `gvm setup` configures everything: shell hook, login profile PATH (so GUI apps like VSCode find Go), and Windows registry. Works correctly after a fresh install or a shell change.
@@ -52,7 +52,7 @@ gvm is a Go version manager built from scratch in Rust. It was designed with a s
 ## 🚀 Features
 
 - 📥 **Install any Go version** - by exact version, minor range, or `latest`
-- ⚡ **Parallel downloads** - multiple simultaneous connections with automatic resume on interruption (`-j/--connections`, `--retries`)
+- ⚡ **Fast, resumable downloads** - single-stream with automatic resume on interruption (`--retries`)
 - 🔨 **Build from source** - compile any Go version from the official source tarball with automatic bootstrap detection and real-time streaming output
 - 🌍 **Global default** - set a system-wide version with `gvm use`
 - 📌 **Per-project pinning** - drop a `.go-version` file; gvm activates it automatically
@@ -142,16 +142,13 @@ gvm install 1.22.4 --force  # 🔄 reinstall even if already present
 **Download tuning:**
 
 ```sh
-gvm install latest -j 8            # use 8 parallel connections
-gvm install latest -j 1            # single-stream (no parallelism)
-gvm install latest --retries 5     # retry each chunk up to 5 times on error
-gvm install latest -j 4 --retries 0  # fail immediately on first error
+gvm install latest --retries 5     # retry up to 5 times on error
+gvm install latest --retries 0     # fail immediately on first error
 ```
 
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
-| `-j, --connections <N>` | `4` | Parallel connections per download. The server must support `Accept-Ranges`; gvm falls back to single-stream automatically. |
-| `--retries <N>` | `3` | Max retry attempts per connection on network failure. Uses exponential back-off (1 s, 2 s, 4 s, …). |
+| `--retries <N>` | `3` | Max retry attempts on network failure. Uses exponential back-off (1 s, 2 s, 4 s, …). |
 
 > 💡 If a download is interrupted (network drop, Ctrl-C), re-running the same `gvm install` command resumes from the last byte written - no data is re-downloaded.
 
@@ -205,8 +202,7 @@ gvm build 1.24.0 --env GOAMD64=v3 --env CC=clang
 **Download tuning** (source tarball and bootstrap download):
 
 ```sh
-gvm build 1.24.0 -j 8           # 8 parallel connections for the source download
-gvm build 1.24.0 --retries 5    # retry each chunk up to 5 times
+gvm build 1.24.0 --retries 5    # retry up to 5 times on error
 ```
 
 #### Bootstrap compiler
@@ -407,8 +403,7 @@ Self-updates gvm to the latest release published on GitHub.
 ```sh
 gvm upgrade              # 🔍 check and update if a newer version exists
 gvm upgrade --force      # 🔄 reinstall the latest even if already up to date
-gvm upgrade -j 8         # download the new binary with 8 parallel connections
-gvm upgrade --retries 5  # retry each chunk up to 5 times on error
+gvm upgrade --retries 5  # retry up to 5 times on error
 ```
 
 > 🔒 On Unix the replacement is **atomic** (same-filesystem rename). On Windows the old binary is renamed first to free its name, then the new binary takes the original path. A rollback is attempted automatically if the replacement fails.
