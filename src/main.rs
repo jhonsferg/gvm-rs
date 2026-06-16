@@ -49,7 +49,6 @@ fn run() -> anyhow::Result<()> {
             env_vars,
             download,
         } => {
-            http::set_connections(download.connections);
             http::set_retries(download.retries);
             commands::build::run(
                 &config,
@@ -65,7 +64,6 @@ fn run() -> anyhow::Result<()> {
             force,
             download,
         } => {
-            http::set_connections(download.connections);
             http::set_retries(download.retries);
             commands::install::run(&config, &version, force)
         }
@@ -83,7 +81,6 @@ fn run() -> anyhow::Result<()> {
         Command::Doctor { shell } => commands::doctor::run(&config, shell.as_deref()),
         Command::Completions { shell } => commands::completions::run(&shell),
         Command::Upgrade { force, download } => {
-            http::set_connections(download.connections);
             http::set_retries(download.retries);
             commands::upgrade::run(force)
         }
