@@ -13,26 +13,10 @@ use clap::{Args, Parser, Subcommand};
 /// archives, source tarballs, or the gvm binary itself.
 #[derive(Args, Clone, Debug)]
 pub struct DownloadArgs {
-    /// Number of parallel connections used to download each file (default: 4).
+    /// Maximum retry attempts on network failure (default: 3).
     ///
-    /// Each connection fetches a separate byte range simultaneously, giving
-    /// much higher throughput on fast links. The server must advertise
-    /// `Accept-Ranges: bytes`; gvm falls back to a single stream when it does
-    /// not. Use `-j 1` to force single-stream mode.
-    #[arg(
-        long,
-        short = 'j',
-        default_value = "4",
-        value_name = "N",
-        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
-    )]
-    pub connections: usize,
-
-    /// Maximum retry attempts per connection on network failure (default: 3).
-    ///
-    /// Retries use exponential back-off (1 s, 2 s, 4 s, …). Each parallel
-    /// chunk retries independently, so a transient error in one chunk does
-    /// not abort the others. Set to `0` to fail immediately without retrying.
+    /// Retries use exponential back-off (1 s, 2 s, 4 s, …). Set to `0` to
+    /// fail immediately without retrying.
     #[arg(long, default_value = "3", value_name = "N")]
     pub retries: u8,
 }
