@@ -180,7 +180,11 @@ fn try_fetch(url: &str, part: &Path, offset: u64) -> Result<()> {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
-            if resuming { offset + len } else { len }
+            if resuming {
+                offset + len
+            } else {
+                len
+            }
         });
 
     let pb = progress_bar(total_length, if resuming { offset } else { 0 });
