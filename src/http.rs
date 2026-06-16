@@ -8,11 +8,11 @@
 //! [`log_response`] print HTTP negotiation details to stderr so the user
 //! can diagnose connectivity, redirects, and server behaviour.
 //!
-//! [`set_connections`] and [`set_retries`] configure the parallel download
-//! engine; their values are read from `--connections` / `--retries` CLI flags
-//! and applied globally before any download begins.
+//! [`set_retries`] configures the download engine's retry limit; its value
+//! is read from the `--retries` CLI flag and applied globally before any
+//! download begins.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -21,10 +21,7 @@ use colored::Colorize;
 /// Set to `true` by `main` when the user passes `--verbose` / `-v`.
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 
-/// Number of parallel connections used by the download engine (default: 4).
-static CONNECTIONS: AtomicUsize = AtomicUsize::new(4);
-
-/// Maximum retry attempts per chunk on network failure (default: 3).
+/// Maximum retry attempts on network failure (default: 3).
 static RETRIES: AtomicU8 = AtomicU8::new(3);
 
 /// Activates (or deactivates) verbose HTTP logging for the process lifetime.
@@ -66,16 +63,6 @@ pub fn log_response(status: u16, reason: &str, headers: &ureq::http::HeaderMap) 
         }
         eprintln!();
     }
-}
-
-/// Sets the number of parallel connections for the download engine.
-pub fn set_connections(n: usize) {
-    CONNECTIONS.store(n, Ordering::Relaxed);
-}
-
-/// Returns the configured number of parallel download connections.
-pub fn connections() -> usize {
-    CONNECTIONS.load(Ordering::Relaxed)
 }
 
 /// Sets the maximum number of retry attempts on network failure.
