@@ -418,109 +418,19 @@ fn home_relative_path(path: &Path) -> String {
 /// Returns an error if the profile path cannot be determined, the file cannot
 /// be read, or the file cannot be written.
 pub fn inject_profile(shell: &dyn ShellConfig, gvm_bin_dir: Option<&Path>) -> Result<()> {
-    use anyhow::Context;
-
-    const INIT_MARKER: &str = "# gvm init";
-    const WRAPPER_MARKER: &str = "# gvm wrapper";
+    use crate::profile;
 
     let init_content = build_init_content(shell, gvm_bin_dir);
+    let wrapper_content = shell.wrapper_function().to_string();
 
-    let profile = shell
+    let profile_path = shell
         .profile_path()
         .ok_or_else(|| anyhow::anyhow!("Cannot determine profile path for {}", shell.name()))?;
 
-    if let Some(parent) = profile.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    profile::ensure_profile(&profile_path, &init_content, &wrapper_content)
+        .with_context(|| format!("Failed to update profile {}", profile_path.display()))?;
 
-    let existing = if profile.exists() {
-        std::fs::read_to_string(&profile)?
-    } else {
-        String::new()
-    };
-
-    let has_init = existing.contains(INIT_MARKER);
-    let has_wrapper = existing.contains(WRAPPER_MARKER);
-
-    // If both markers are present, check whether the blocks are up to date.
-    // When gvm is upgraded its init_line or wrapper may change; we replace
-    // stale blocks rather than silently leaving old ones in place.
-    if has_init && has_wrapper {
-        let expected_init = format!("{INIT_MARKER}\n{init_content}\n");
-        let expected_wrapper = format!("{WRAPPER_MARKER}\n{}\n", shell.wrapper_function());
-        if existing.contains(&expected_init) && existing.contains(&expected_wrapper) {
-            println!("  gvm hook already configured in {}", profile.display());
-            return Ok(());
-        }
-
-        let mut content = existing.clone();
-        let mut any_updated = false;
-
-        // Replace stale init block (marker to next blank line or next marker).
-        if !existing.contains(&expected_init) {
-            if let Some(marker_pos) = content.find(INIT_MARKER) {
-                let after_marker = &content[marker_pos + INIT_MARKER.len()..];
-                let block_len = after_marker
-                    .find("\n# gvm ")
-                    .map(|i| i + 1)
-                    .unwrap_or(after_marker.len());
-                let end = marker_pos + INIT_MARKER.len() + block_len;
-                let new_block = format!("{INIT_MARKER}\n{init_content}\n");
-                content = format!("{}{}{}", &content[..marker_pos], new_block, &content[end..]);
-            }
-            println!("  Updated init hook in {}", profile.display());
-            any_updated = true;
-        }
-
-        // Replace stale wrapper block (always last in the file).
-        if !content.contains(&expected_wrapper) {
-            let marker_pos = content
-                .rfind(WRAPPER_MARKER)
-                .expect("WRAPPER_MARKER must exist when has_wrapper is true");
-            let before = content[..marker_pos].trim_end().to_string();
-            content = format!(
-                "{before}\n\n{WRAPPER_MARKER}\n{}\n",
-                shell.wrapper_function()
-            );
-            println!("  Updated wrapper function in {}", profile.display());
-            any_updated = true;
-        }
-
-        if any_updated {
-            std::fs::write(&profile, &content)
-                .with_context(|| format!("Failed to write to {}", profile.display()))?;
-        }
-        return Ok(());
-    }
-
-    let mut content = existing.trim_end().to_string();
-    let mut changed = false;
-
-    if !has_init {
-        if !content.is_empty() {
-            content.push_str("\n\n");
-        }
-        content.push_str(&format!("{INIT_MARKER}\n{init_content}\n"));
-        println!("  Added init hook to {}", profile.display());
-        changed = true;
-    } else {
-        println!("  Init hook already present in {}", profile.display());
-    }
-
-    if !has_wrapper {
-        content.push_str(&format!(
-            "\n{WRAPPER_MARKER}\n{}\n",
-            shell.wrapper_function()
-        ));
-        println!("  Added wrapper function to {}", profile.display());
-        changed = true;
-    }
-
-    if changed {
-        std::fs::write(&profile, content)
-            .with_context(|| format!("Failed to write to {}", profile.display()))?;
-    }
-
+    println!("  gvm hook configured in {}", profile_path.display());
     Ok(())
 }
 
@@ -539,53 +449,16 @@ pub fn inject_profile(shell: &dyn ShellConfig, gvm_bin_dir: Option<&Path>) -> Re
 /// Returns an error if the login profile cannot be read or written.
 #[cfg(not(target_os = "windows"))]
 pub fn inject_login_profile(shell: &dyn ShellConfig) -> Result<()> {
-    let Some(profile) = shell.login_profile_path() else {
+    use crate::profile;
+
+    let Some(profile_path) = shell.login_profile_path() else {
         return Ok(());
     };
 
-    const MARKER: &str = "# gvm path";
-    const EXPORT_LINE: &str = r#"export PATH="$HOME/.gvm/current/bin:$PATH""#;
+    profile::update_path_block(&profile_path)
+        .with_context(|| format!("Failed to update PATH block in {}", profile_path.display()))?;
 
-    if let Some(parent) = profile.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let existing = if profile.exists() {
-        std::fs::read_to_string(&profile)
-            .with_context(|| format!("Cannot read {}", profile.display()))?
-    } else {
-        String::new()
-    };
-
-    let expected_block = format!("{MARKER}\n{EXPORT_LINE}\n");
-
-    if existing.contains(&expected_block) {
-        println!(
-            "  gvm PATH entry already configured in {}",
-            profile.display()
-        );
-        return Ok(());
-    }
-
-    if existing.contains(MARKER) {
-        // Stale block - remove and re-add with updated content.
-        let cleaned = remove_gvm_lines(&existing);
-        let new_content = format!("{}\n\n{expected_block}", cleaned.trim_end());
-        std::fs::write(&profile, &new_content)
-            .with_context(|| format!("Failed to write to {}", profile.display()))?;
-        println!("  Updated gvm PATH entry in {}", profile.display());
-        return Ok(());
-    }
-
-    // No marker yet - append.
-    let mut content = existing.trim_end().to_string();
-    if !content.is_empty() {
-        content.push_str("\n\n");
-    }
-    content.push_str(&expected_block);
-    std::fs::write(&profile, content)
-        .with_context(|| format!("Failed to write to {}", profile.display()))?;
-    println!("  Added gvm PATH entry to {}", profile.display());
+    println!("  gvm PATH entry configured in {}", profile_path.display());
     Ok(())
 }
 
@@ -600,78 +473,13 @@ pub fn inject_login_profile(shell: &dyn ShellConfig) -> Result<()> {
 ///
 /// Returns an error if the file cannot be read or written.
 pub fn strip_profile(path: &Path) -> Result<bool> {
+    use crate::profile;
+
     if !path.exists() {
         return Ok(false);
     }
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("Cannot read {}", path.display()))?;
-    let cleaned = remove_gvm_lines(&content);
-    if cleaned == content {
-        return Ok(false);
-    }
-    std::fs::write(path, &cleaned).with_context(|| format!("Cannot write {}", path.display()))?;
-    Ok(true)
+    profile::strip_gvm_blocks(path)
 }
-
-/// Strips all gvm-managed lines from a profile file's content string.
-///
-/// Recognised block markers (each starts a block terminated by the next
-/// blank line):
-///
-/// - `# gvm init`             - eval hook added by `gvm setup`
-/// - `# gvm wrapper`          - shell wrapper function added by `gvm setup`
-/// - `# gvm path`             - static PATH entry added by `gvm setup` to the login profile
-/// - `# gvm: binary location` - legacy PATH entry written by old install scripts
-///
-/// After removal, runs of more than one consecutive blank line are collapsed
-/// to a single blank line so the file remains tidy.
-pub fn remove_gvm_lines(content: &str) -> String {
-    const MARKERS: &[&str] = &[
-        "# gvm init",
-        "# gvm wrapper",
-        "# gvm path",
-        "# gvm: binary location",
-    ];
-
-    let mut in_block = false;
-    let mut out: Vec<&str> = Vec::new();
-
-    for line in content.lines() {
-        if in_block {
-            if line.trim().is_empty() {
-                in_block = false;
-            }
-            continue;
-        }
-        if MARKERS.iter().any(|m| line.contains(m)) {
-            in_block = true;
-            continue;
-        }
-        out.push(line);
-    }
-
-    // Collapse consecutive blank lines down to one.
-    let mut result = String::with_capacity(content.len());
-    let mut prev_blank = false;
-    for line in &out {
-        let blank = line.trim().is_empty();
-        if blank && prev_blank {
-            continue;
-        }
-        result.push_str(line);
-        result.push('\n');
-        prev_blank = blank;
-    }
-
-    let trimmed = result.trim_end().to_string();
-    if trimmed.is_empty() {
-        trimmed
-    } else {
-        trimmed + "\n"
-    }
-}
-
-// --- Helpers -----------------------------------------------------------------
 
 /// Returns `true` if the directory containing the current `gvm` executable
 /// is listed in the `PATH` environment variable.
@@ -843,86 +651,5 @@ mod tests {
         let first = run_inject(&sh, "");
         let second = run_inject(&sh, &first);
         assert_eq!(first, second, "fish: second run must not change the file");
-    }
-
-    // --- remove_gvm_lines tests -----------------------------------------------
-
-    #[test]
-    fn removes_init_block() {
-        let input = "source ~/.bashrc\n\n# gvm init\neval \"$(gvm env --shell bash)\"\n";
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm init"));
-        assert!(!got.contains("eval"));
-        assert!(got.contains("source ~/.bashrc"));
-    }
-
-    #[test]
-    fn removes_legacy_binary_location_block() {
-        let input =
-            "# existing line\n\n# gvm: binary location\nexport PATH=\"/home/user/.local/bin:$PATH\"\n";
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm: binary location"));
-        assert!(!got.contains("export PATH"));
-        assert!(got.contains("# existing line"));
-    }
-
-    #[test]
-    fn removes_path_block() {
-        let input = "# existing line\n\n# gvm path\nexport PATH=\"$HOME/.gvm/current/bin:$PATH\"\n";
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm path"));
-        assert!(!got.contains(".gvm/current/bin"));
-        assert!(got.contains("# existing line"));
-    }
-
-    #[test]
-    fn removes_wrapper_block() {
-        let input = concat!(
-            "source ~/.bashrc\n\n",
-            "# gvm wrapper\n",
-            "gvm() {\n",
-            "    command gvm \"$@\"\n",
-            "    local _gvm_exit=$?\n",
-            "    return $_gvm_exit\n",
-            "}\n",
-        );
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm wrapper"));
-        assert!(!got.contains("gvm()"));
-        assert!(got.contains("source ~/.bashrc"));
-    }
-
-    #[test]
-    fn removes_all_blocks() {
-        let input = concat!(
-            "# user config\n\n",
-            "# gvm: binary location\nexport PATH=\"/bin:$PATH\"\n\n",
-            "# gvm init\neval \"$(gvm env --shell bash)\"\n\n",
-            "# gvm wrapper\n",
-            "gvm() {\n",
-            "    command gvm \"$@\"\n",
-            "}\n\n",
-            "# gvm path\nexport PATH=\"$HOME/.gvm/current/bin:$PATH\"\n",
-        );
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("gvm init"));
-        assert!(!got.contains("gvm: binary location"));
-        assert!(!got.contains("gvm wrapper"));
-        assert!(!got.contains("gvm path"));
-        assert!(!got.contains("gvm()"));
-        assert!(got.contains("# user config"));
-    }
-
-    #[test]
-    fn idempotent_on_clean_file() {
-        let input = "export FOO=bar\nalias ll='ls -la'\n";
-        assert_eq!(remove_gvm_lines(input), input);
-    }
-
-    #[test]
-    fn collapses_extra_blank_lines() {
-        let input = "line1\n\n\n\nline2\n";
-        let got = remove_gvm_lines(input);
-        assert!(!got.contains("\n\n\n"));
     }
 }
