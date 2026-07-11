@@ -12,6 +12,7 @@ mod config;
 mod fs;
 mod http;
 mod lock;
+mod profile;
 mod remote;
 mod shell;
 mod toolchain;
