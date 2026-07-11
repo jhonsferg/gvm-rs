@@ -24,30 +24,22 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use crate::{
     archive::{download, extract},
+    commands::bootstrap,
     config::Config,
     fs as gvm_fs,
     http::HttpClient,
     lock,
-    remote::{index, release::Release},
+    remote::index,
     toolchain,
     user_version::VersionSpec,
-    version::GoVersion,
 };
-
-struct Bootstrap {
-    /// Directory passed as `GOROOT_BOOTSTRAP` to `make.bash`.
-    path: PathBuf,
-    /// If set, this directory is removed after compilation (temp download).
-    cleanup: Option<PathBuf>,
-    label: String,
-}
 
 /// Compiles `version_str` from source and installs it to the gvm versions store.
 pub fn run(
@@ -113,7 +105,8 @@ pub fn run(
     println!();
 
     // Resolve the bootstrap compiler before downloading source.
-    let bootstrap = resolve_bootstrap(config, client, &version, bootstrap_spec, &releases)?;
+    let bootstrap =
+        bootstrap::resolve_bootstrap(config, client, &version, bootstrap_spec, &releases)?;
     println!("{} Bootstrap: {}", "->".cyan(), bootstrap.label.bold());
 
     // Download source tarball.
@@ -129,7 +122,7 @@ pub fn run(
         &src_archive,
     ) {
         let _ = std::fs::remove_file(&src_archive);
-        cleanup_bootstrap(&bootstrap);
+        bootstrap::cleanup_bootstrap(&bootstrap);
         return Err(e).context("Failed to download source tarball");
     }
 
@@ -138,7 +131,7 @@ pub fn run(
         println!("{} Verifying checksum...", "->".cyan());
         if let Err(e) = download::verify_sha256(&src_archive, &src_file.sha256) {
             let _ = std::fs::remove_file(&src_archive);
-            cleanup_bootstrap(&bootstrap);
+            bootstrap::cleanup_bootstrap(&bootstrap);
             return Err(e);
         }
     }
@@ -153,7 +146,7 @@ pub fn run(
     if let Err(e) = extract::unpack(&src_archive, &staging) {
         let _ = std::fs::remove_file(&src_archive);
         let _ = std::fs::remove_dir_all(&staging);
-        cleanup_bootstrap(&bootstrap);
+        bootstrap::cleanup_bootstrap(&bootstrap);
         return Err(e).context("Failed to extract source tarball");
     }
     let _ = std::fs::remove_file(&src_archive);
@@ -162,7 +155,7 @@ pub fn run(
     let source_root = staging.join("go");
     if !source_root.exists() {
         let _ = std::fs::remove_dir_all(&staging);
-        cleanup_bootstrap(&bootstrap);
+        bootstrap::cleanup_bootstrap(&bootstrap);
         anyhow::bail!(
             "Unexpected archive layout: expected 'go/' inside {}",
             staging.display()
@@ -187,7 +180,7 @@ pub fn run(
         env_vars,
         &config.tmp_dir(),
     );
-    cleanup_bootstrap(&bootstrap);
+    bootstrap::cleanup_bootstrap(&bootstrap);
 
     if let Err(e) = compiled {
         let _ = std::fs::remove_dir_all(&staging);
@@ -216,144 +209,6 @@ pub fn run(
     );
 
     Ok(())
-}
-
-/// Resolves the bootstrap Go compiler to use.
-///
-/// Priority:
-/// 1. `--bootstrap VERSION` - must already be installed via gvm.
-/// 2. Previous version (patch-1, or latest of minor-1 when patch==0) if installed locally.
-/// 3. Download that same previous version temporarily; removed after compilation.
-fn resolve_bootstrap(
-    config: &Config,
-    client: &HttpClient,
-    target: &GoVersion,
-    bootstrap_spec: Option<&str>,
-    releases: &[Release],
-) -> Result<Bootstrap> {
-    // Explicit --bootstrap flag.
-    if let Some(spec_str) = bootstrap_spec {
-        let spec = VersionSpec::parse(spec_str)?;
-        let bv = toolchain::resolve_installed(config, &spec).map_err(|_| {
-            anyhow!(
-                "Bootstrap version '{}' is not installed. Run 'gvm install {}' first.",
-                spec_str,
-                spec_str
-            )
-        })?;
-        return Ok(Bootstrap {
-            path: config.version_dir(&bv.tag()),
-            cleanup: None,
-            label: bv.tag(),
-        });
-    }
-
-    // Compute the closest older version spec:
-    //   patch > 0 → exact previous patch (e.g. 1.25.10 for target 1.25.11)
-    //   patch == 0 → latest patch of previous minor (e.g. 1.24.x for target 1.25.0)
-    let prev_spec = if target.patch > 0 {
-        VersionSpec::Exact {
-            major: target.major,
-            minor: target.minor,
-            patch: target.patch - 1,
-        }
-    } else {
-        VersionSpec::Partial {
-            major: target.major,
-            minor: target.minor.saturating_sub(1),
-        }
-    };
-
-    // Check if the previous version is already installed - use it without downloading.
-    if let Ok(bv) = toolchain::resolve_installed(config, &prev_spec) {
-        return Ok(Bootstrap {
-            path: config.version_dir(&bv.tag()),
-            cleanup: None,
-            label: bv.tag(),
-        });
-    }
-
-    // Not installed locally - download that specific version as a temporary bootstrap.
-    let b_release = index::resolve(&prev_spec, releases).with_context(|| {
-        format!(
-            "Could not find a bootstrap release for {}. \
-             Install a Go version first with 'gvm install latest', \
-             or specify one with --bootstrap.",
-            prev_spec
-        )
-    })?;
-
-    let b_version = b_release
-        .go_version()
-        .ok_or_else(|| anyhow!("Cannot parse bootstrap version tag"))?;
-
-    let b_archive = b_release
-        .archive_for(index::host_os(), index::host_arch())
-        .ok_or_else(|| {
-            anyhow!(
-                "No bootstrap binary available for {}/{}.",
-                index::host_os(),
-                index::host_arch()
-            )
-        })?;
-
-    let bootstrap_staging = config
-        .tmp_dir()
-        .join(format!("bootstrap-{}", b_version.tag()));
-
-    println!(
-        "{} Downloading bootstrap {} (temporary, removed after build)...",
-        "->".cyan(),
-        b_version.tag().bold()
-    );
-
-    let archive_path = config.tmp_dir().join(&b_archive.filename);
-    if let Err(e) = download::fetch(
-        client,
-        &index::download_url(&b_archive.filename),
-        &archive_path,
-    ) {
-        let _ = std::fs::remove_file(&archive_path);
-        return Err(e).context("Failed to download bootstrap compiler");
-    }
-    if !b_archive.sha256.is_empty() {
-        if let Err(e) = download::verify_sha256(&archive_path, &b_archive.sha256) {
-            let _ = std::fs::remove_file(&archive_path);
-            return Err(e);
-        }
-    }
-
-    if bootstrap_staging.exists() {
-        std::fs::remove_dir_all(&bootstrap_staging)?;
-    }
-    std::fs::create_dir_all(&bootstrap_staging)?;
-
-    if let Err(e) = extract::unpack(&archive_path, &bootstrap_staging) {
-        let _ = std::fs::remove_file(&archive_path);
-        let _ = std::fs::remove_dir_all(&bootstrap_staging);
-        return Err(e).context("Failed to extract bootstrap compiler");
-    }
-    let _ = std::fs::remove_file(&archive_path);
-
-    // Bootstrap archive also extracts to a `go/` subdirectory.
-    let bootstrap_root = bootstrap_staging.join("go");
-    if !bootstrap_root.exists() {
-        let _ = std::fs::remove_dir_all(&bootstrap_staging);
-        anyhow::bail!("Bootstrap archive had an unexpected layout");
-    }
-
-    Ok(Bootstrap {
-        path: bootstrap_root,
-        cleanup: Some(bootstrap_staging),
-        label: format!("{} (downloaded temporarily)", b_version.tag()),
-    })
-}
-
-/// Removes the temporary bootstrap directory, if any.
-fn cleanup_bootstrap(b: &Bootstrap) {
-    if let Some(dir) = &b.cleanup {
-        let _ = std::fs::remove_dir_all(dir);
-    }
 }
 
 /// Runs the Go build script inside `source_root` with the supplied environment.
