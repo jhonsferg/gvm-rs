@@ -32,7 +32,8 @@ use std::time::Duration;
 use crate::{
     archive::{download, extract},
     config::Config,
-    fs as gvm_fs, http,
+    fs as gvm_fs,
+    http::HttpClient,
     remote::{index, release::Release},
     toolchain,
     user_version::VersionSpec,
@@ -50,6 +51,7 @@ struct Bootstrap {
 /// Compiles `version_str` from source and installs it to the gvm versions store.
 pub fn run(
     config: &Config,
+    client: &HttpClient,
     version_str: &str,
     force: bool,
     no_cgo: bool,
@@ -61,7 +63,7 @@ pub fn run(
     // Resolve version against the remote index.
     let spec = VersionSpec::parse(version_str)?;
     println!("{} Fetching available Go versions...", "->".cyan());
-    let releases = index::fetch_releases()?;
+    let releases = index::fetch_releases(client)?;
     let release = index::resolve(&spec, &releases)?;
     let version = release
         .go_version()
@@ -110,7 +112,7 @@ pub fn run(
     println!();
 
     // Resolve the bootstrap compiler before downloading source.
-    let bootstrap = resolve_bootstrap(config, &version, bootstrap_spec, &releases)?;
+    let bootstrap = resolve_bootstrap(config, client, &version, bootstrap_spec, &releases)?;
     println!("{} Bootstrap: {}", "->".cyan(), bootstrap.label.bold());
 
     // Download source tarball.
@@ -120,7 +122,11 @@ pub fn run(
         "->".cyan(),
         src_file.filename.bold()
     );
-    if let Err(e) = download::fetch(&index::download_url(&src_file.filename), &src_archive) {
+    if let Err(e) = download::fetch(
+        client,
+        &index::download_url(&src_file.filename),
+        &src_archive,
+    ) {
         let _ = std::fs::remove_file(&src_archive);
         cleanup_bootstrap(&bootstrap);
         return Err(e).context("Failed to download source tarball");
@@ -163,7 +169,7 @@ pub fn run(
     }
 
     println!("{} Compiling Go {}...", "->".cyan(), version.tag().bold());
-    if !http::is_verbose() {
+    if !client.is_verbose() {
         println!(
             "  {} This will take 5-15 minutes. Run with {} to see build output.",
             "i".yellow(),
@@ -173,6 +179,7 @@ pub fn run(
     println!();
 
     let compiled = compile(
+        client,
         &source_root,
         &bootstrap.path,
         no_cgo,
@@ -217,6 +224,7 @@ pub fn run(
 /// 3. Download that same previous version temporarily; removed after compilation.
 fn resolve_bootstrap(
     config: &Config,
+    client: &HttpClient,
     target: &GoVersion,
     bootstrap_spec: Option<&str>,
     releases: &[Release],
@@ -298,7 +306,11 @@ fn resolve_bootstrap(
     );
 
     let archive_path = config.tmp_dir().join(&b_archive.filename);
-    if let Err(e) = download::fetch(&index::download_url(&b_archive.filename), &archive_path) {
+    if let Err(e) = download::fetch(
+        client,
+        &index::download_url(&b_archive.filename),
+        &archive_path,
+    ) {
         let _ = std::fs::remove_file(&archive_path);
         return Err(e).context("Failed to download bootstrap compiler");
     }
@@ -355,6 +367,7 @@ fn cleanup_bootstrap(b: &Bootstrap) {
 /// subdirectory is created there and passed as `TEMP`/`TMP`/`TMPDIR` so that
 /// Go's intermediate artifacts never leave `~/.gvm/`.
 fn compile(
+    client: &HttpClient,
     source_root: &Path,
     bootstrap_path: &Path,
     no_cgo: bool,
@@ -459,7 +472,7 @@ fn compile(
     pb.set_message("Starting build...");
     pb.enable_steady_tick(Duration::from_millis(120));
 
-    let verbose = http::is_verbose();
+    let verbose = client.is_verbose();
     let mut tail: VecDeque<String> = VecDeque::with_capacity(100);
 
     for line in rx {
