@@ -9,6 +9,7 @@ mod archive;
 mod cli;
 mod commands;
 mod config;
+mod dispatch;
 mod fs;
 mod http;
 mod lock;
