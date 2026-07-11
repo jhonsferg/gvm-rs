@@ -11,7 +11,7 @@
 use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 
-use crate::{config::Config, fs as gvm_fs, user_version::VersionSpec, version::GoVersion};
+use crate::{config::Config, fs as gvm_fs, lock, user_version::VersionSpec, version::GoVersion};
 
 /// Indicates where the active version was determined from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,8 +142,11 @@ pub fn version_bin_path(config: &Config, version: &GoVersion) -> Result<PathBuf>
 ///
 /// Returns an error if the file cannot be written (e.g. permission denied).
 pub fn set_global_version(config: &Config, version: &GoVersion) -> Result<()> {
-    std::fs::write(config.version_file(), version.tag())
-        .context("Failed to write global version file")
+    let lock_path = config.root.join(".lock");
+    lock::with_lock(&lock_path, || {
+        std::fs::write(config.version_file(), version.tag())
+            .context("Failed to write global version file")
+    })
 }
 
 /// Updates the `~/.gvm/current` junction/symlink to point to `version`.
@@ -158,10 +161,13 @@ pub fn set_global_version(config: &Config, version: &GoVersion) -> Result<()> {
 /// Returns an error if the junction/symlink cannot be created (e.g. the
 /// version directory does not exist, or file-system permissions prevent it).
 pub fn update_current_link(config: &Config, version: &GoVersion) -> Result<()> {
-    let link = config.current_dir();
-    let target = config.version_dir(&version.tag());
-    gvm_fs::set_version_link(&link, &target)
-        .with_context(|| format!("Failed to update current link to {}", version.tag()))
+    let lock_path = config.root.join(".lock");
+    lock::with_lock(&lock_path, || {
+        let link = config.current_dir();
+        let target = config.version_dir(&version.tag());
+        gvm_fs::set_version_link(&link, &target)
+            .with_context(|| format!("Failed to update current link to {}", version.tag()))
+    })
 }
 
 // --- Resolution --------------------------------------------------------------
