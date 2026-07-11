@@ -22,6 +22,7 @@ use colored::Colorize;
 
 use cli::{Cli, Command};
 use config::Config;
+use http::HttpClient;
 
 fn main() {
     if let Err(e) = run() {
@@ -37,8 +38,16 @@ fn main() {
 /// Returns an error if configuration cannot be loaded or if the command fails.
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    http::set_verbose(cli.verbose);
     let config = Config::load()?;
+
+    // Create HTTP client with verbosity and retry settings from CLI
+    let retries = match &cli.command {
+        Command::Build { download, .. } => download.retries,
+        Command::Install { download, .. } => download.retries,
+        Command::Upgrade { download, .. } => download.retries,
+        _ => 3,
+    };
+    let client = HttpClient::new(cli.verbose, retries)?;
 
     match cli.command {
         Command::Build {
@@ -47,32 +56,25 @@ fn run() -> anyhow::Result<()> {
             no_cgo,
             bootstrap,
             env_vars,
-            download,
-        } => {
-            http::set_retries(download.retries);
-            commands::build::run(
-                &config,
-                &version,
-                force,
-                no_cgo,
-                bootstrap.as_deref(),
-                &env_vars,
-            )
-        }
-        Command::Install {
-            version,
+            ..
+        } => commands::build::run(
+            &config,
+            &client,
+            &version,
             force,
-            download,
-        } => {
-            http::set_retries(download.retries);
-            commands::install::run(&config, &version, force)
+            no_cgo,
+            bootstrap.as_deref(),
+            &env_vars,
+        ),
+        Command::Install { version, force, .. } => {
+            commands::install::run(&config, &client, &version, force)
         }
         Command::Use { version } => commands::use_version::run(&config, &version),
         Command::Default { version } => commands::default::run(&config, &version),
         Command::Local { version } => commands::local_version::run(&config, &version),
         Command::Uninstall { version } => commands::uninstall::run(&config, &version),
         Command::List => commands::list::run(&config),
-        Command::ListRemote { all } => commands::list_remote::run(&config, all),
+        Command::ListRemote { all } => commands::list_remote::run(&config, &client, all),
         Command::Current => commands::current::run(&config),
         Command::Path { version } => commands::path::run(&config, version.as_deref()),
         Command::Env { shell } => commands::env::run(&config, shell.as_deref()),
@@ -80,12 +82,9 @@ fn run() -> anyhow::Result<()> {
         Command::Exec { version, args } => commands::exec::run(&config, &version, &args),
         Command::Doctor { shell } => commands::doctor::run(&config, shell.as_deref()),
         Command::Completions { shell } => commands::completions::run(&shell),
-        Command::Upgrade { force, download } => {
-            http::set_retries(download.retries);
-            commands::upgrade::run(force)
-        }
+        Command::Upgrade { force, .. } => commands::upgrade::run(&client, force),
         Command::Implode { force } => commands::implode::run(&config, force),
-        Command::Outdated => commands::outdated::run(&config),
+        Command::Outdated => commands::outdated::run(&config, &client),
         Command::Prune {
             force,
             dry_run,
