@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::{http, remote::release::Release, user_version::VersionSpec};
+use crate::{http::HttpClient, remote::release::Release, user_version::VersionSpec};
 
 /// URL of the go.dev download API that lists all releases.
 const GO_DL_API: &str = "https://go.dev/dl/?mode=json&include=all";
@@ -15,22 +15,24 @@ const GO_DL_API: &str = "https://go.dev/dl/?mode=json&include=all";
 /// The API returns both stable and unstable (RC/beta) releases; callers are
 /// responsible for filtering by [`Release::stable`] if needed.
 ///
-/// When `--verbose` is active, the request and response details are printed
+/// When verbose mode is active, the request and response details are printed
 /// to stderr before the JSON body is parsed.
 ///
 /// # Errors
 ///
 /// Returns an error if the HTTP request fails or if the response body cannot
 /// be deserialised as JSON.
-pub fn fetch_releases() -> Result<Vec<Release>> {
-    http::log_request("GET", GO_DL_API);
+pub fn fetch_releases(client: &HttpClient) -> Result<Vec<Release>> {
+    crate::http::log_request(client, "GET", GO_DL_API);
 
-    let mut response = http::agent()?
+    let mut response = client
+        .agent()
         .get(GO_DL_API)
         .call()
         .context("Failed to reach go.dev - check your internet connection")?;
 
-    http::log_response(
+    crate::http::log_response(
+        client,
         response.status().as_u16(),
         response.status().canonical_reason().unwrap_or(""),
         response.headers(),
