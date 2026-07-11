@@ -8,6 +8,7 @@
 //! [`crate::main`] is the only caller; it dispatches to the correct `run`
 //! function after parsing the CLI.
 
+pub mod bootstrap;
 pub mod build;
 pub mod completions;
 pub mod current;

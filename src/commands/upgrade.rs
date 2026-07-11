@@ -19,7 +19,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use std::path::Path;
 
-use crate::{archive::download, http};
+use crate::{archive::download, http::HttpClient};
 
 /// GitHub repository slug used to build the Releases API URL.
 const REPO: &str = "jhonsferg/gvm-rs";
@@ -54,15 +54,15 @@ struct GithubRelease {
 /// - The GitHub API cannot be reached or returns an unexpected response.
 /// - The archive cannot be downloaded or extracted.
 /// - The in-place replacement fails (e.g. permission denied).
-pub fn run(force: bool) -> Result<()> {
+pub fn run(client: &HttpClient, force: bool) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
 
     println!("{} Checking for updates...", "->".cyan());
 
     let api_url = format!("{}/repos/{REPO}/releases/latest", api_base());
-    http::log_request("GET", &api_url);
+    crate::http::log_request(client, "GET", &api_url);
 
-    let mut response = match http::agent()?.get(&api_url).call() {
+    let mut response = match client.agent().get(&api_url).call() {
         Ok(r) => r,
         Err(ureq::Error::StatusCode(404)) => anyhow::bail!(
             "No releases found for {REPO}. \
@@ -74,7 +74,8 @@ pub fn run(force: bool) -> Result<()> {
         }
     };
 
-    http::log_response(
+    crate::http::log_response(
+        client,
         response.status().as_u16(),
         response.status().canonical_reason().unwrap_or(""),
         response.headers(),
@@ -111,7 +112,7 @@ pub fn run(force: bool) -> Result<()> {
     println!("{} Downloading {}...", "->".cyan(), archive_name.bold());
 
     let tmp_archive = tmp_archive_path()?;
-    if let Err(e) = download::fetch(&url, &tmp_archive) {
+    if let Err(e) = download::fetch(client, &url, &tmp_archive) {
         let _ = std::fs::remove_file(&tmp_archive);
         return Err(e);
     }

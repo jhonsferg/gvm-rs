@@ -16,7 +16,7 @@ use colored::Colorize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::{config::Config, toolchain, version::GoVersion};
+use crate::{config::Config, lock, toolchain, version::GoVersion};
 
 /// Finds and removes unreferenced installed Go versions.
 ///
@@ -138,9 +138,10 @@ pub fn run(config: &Config, force: bool, dry_run: bool, scan_dir: Option<&str>) 
 
     // ── Remove ────────────────────────────────────────────────────────────────
 
+    let lock_path = config.root.join(".lock");
     for v in &to_remove {
         let dir = config.version_dir(&v.tag());
-        std::fs::remove_dir_all(&dir)?;
+        lock::with_lock(&lock_path, || Ok(std::fs::remove_dir_all(&dir)?))?;
         println!("  {} Removed {}", "✓".green(), v.tag());
     }
 

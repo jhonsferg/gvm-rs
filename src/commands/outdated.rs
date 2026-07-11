@@ -7,7 +7,7 @@
 use anyhow::Result;
 use colored::Colorize;
 
-use crate::{config::Config, remote::index, toolchain};
+use crate::{config::Config, http::HttpClient, remote::index, toolchain};
 
 /// Checks installed Go versions against go.dev and prints their update status.
 ///
@@ -19,7 +19,7 @@ use crate::{config::Config, remote::index, toolchain};
 ///
 /// Returns an error if the versions directory cannot be read or if the go.dev
 /// release index cannot be fetched.
-pub fn run(config: &Config) -> Result<()> {
+pub fn run(config: &Config, client: &HttpClient) -> Result<()> {
     let installed = toolchain::list_installed(config)?;
 
     if installed.is_empty() {
@@ -28,7 +28,7 @@ pub fn run(config: &Config) -> Result<()> {
     }
 
     println!("{} Fetching available Go versions...", "->".cyan());
-    let releases = index::fetch_releases()?;
+    let releases = index::fetch_releases(client)?;
 
     // Only consider stable releases; collect into owned Vec so we can compare.
     let stable: Vec<_> = releases

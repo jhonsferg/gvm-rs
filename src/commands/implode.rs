@@ -13,7 +13,7 @@ use anyhow::{bail, Context, Result};
 use colored::Colorize;
 use std::path::Path;
 
-use crate::{config::Config, shell};
+use crate::{config::Config, lock, shell};
 
 /// Completely removes gvm and all associated data from the system.
 ///
@@ -74,7 +74,8 @@ pub fn run(config: &Config, force: bool) -> Result<()> {
 
     // ── Remove data directory ─────────────────────────────────────────────────
     if config.root.exists() {
-        std::fs::remove_dir_all(&config.root)
+        let lock_path = config.root.join(".lock");
+        lock::with_lock(&lock_path, || Ok(std::fs::remove_dir_all(&config.root)?))
             .with_context(|| format!("Failed to remove {}", config.root.display()))?;
         println!("  {} Removed {}", "✓".green(), config.root.display());
     }

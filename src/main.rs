@@ -9,10 +9,14 @@ mod archive;
 mod cli;
 mod commands;
 mod config;
+mod dispatch;
 mod fs;
 mod http;
+mod lock;
+mod profile;
 mod remote;
 mod shell;
+mod tempdir;
 mod toolchain;
 mod user_version;
 mod version;
@@ -22,6 +26,7 @@ use colored::Colorize;
 
 use cli::{Cli, Command};
 use config::Config;
+use http::HttpClient;
 
 fn main() {
     if let Err(e) = run() {
@@ -37,64 +42,26 @@ fn main() {
 /// Returns an error if configuration cannot be loaded or if the command fails.
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    http::set_verbose(cli.verbose);
     let config = Config::load()?;
 
-    match cli.command {
-        Command::Build {
-            version,
-            force,
-            no_cgo,
-            bootstrap,
-            env_vars,
-            download,
-        } => {
-            http::set_retries(download.retries);
-            commands::build::run(
-                &config,
-                &version,
-                force,
-                no_cgo,
-                bootstrap.as_deref(),
-                &env_vars,
-            )
-        }
-        Command::Install {
-            version,
-            force,
-            download,
-        } => {
-            http::set_retries(download.retries);
-            commands::install::run(&config, &version, force)
-        }
-        Command::Use { version } => commands::use_version::run(&config, &version),
-        Command::Default { version } => commands::default::run(&config, &version),
-        Command::Local { version } => commands::local_version::run(&config, &version),
-        Command::Uninstall { version } => commands::uninstall::run(&config, &version),
-        Command::List => commands::list::run(&config),
-        Command::ListRemote { all } => commands::list_remote::run(&config, all),
-        Command::Current => commands::current::run(&config),
-        Command::Path { version } => commands::path::run(&config, version.as_deref()),
-        Command::Env { shell } => commands::env::run(&config, shell.as_deref()),
-        Command::Setup { shell, reset } => commands::setup::run(shell.as_deref(), reset),
-        Command::Exec { version, args } => commands::exec::run(&config, &version, &args),
-        Command::Doctor { shell } => commands::doctor::run(&config, shell.as_deref()),
-        Command::Completions { shell } => commands::completions::run(&shell),
-        Command::Upgrade { force, download } => {
-            http::set_retries(download.retries);
-            commands::upgrade::run(force)
-        }
-        Command::Implode { force } => commands::implode::run(&config, force),
-        Command::Outdated => commands::outdated::run(&config),
-        Command::Prune {
-            force,
-            dry_run,
-            scan_dir,
-        } => commands::prune::run(&config, force, dry_run, scan_dir.as_deref()),
-        Command::Shell {
-            version,
-            unset,
-            shell,
-        } => commands::shell::run(&config, version.as_deref(), unset, shell.as_deref()),
-    }
+    // Create HTTP client with verbosity and retry settings from CLI
+    let retries = match &cli.command {
+        Command::Build { download, .. } => download.retries,
+        Command::Install { download, .. } => download.retries,
+        Command::Upgrade { download, .. } => download.retries,
+        _ => 3,
+    };
+    let client = HttpClient::new(cli.verbose, retries)?;
+
+    // Extract command name and args from clap Command enum
+    let (cmd_name, args) = dispatch::command_to_name_and_args(&cli.command);
+
+    // Dispatch through registry
+    dispatch::dispatch(
+        &config,
+        &config as &dyn config::ConfigMut,
+        &client,
+        cmd_name,
+        args,
+    )
 }

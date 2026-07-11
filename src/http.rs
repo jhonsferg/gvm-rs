@@ -1,42 +1,60 @@
-//! Shared HTTP agent factory, verbose-logging helpers, and download options.
+//! Shared HTTP client, verbose-logging helpers, and download options.
 //!
-//! All outbound HTTP requests in `gvm` go through [`agent()`].
-//! Using a single builder ensures consistent timeout and header settings
+//! All outbound HTTP requests in `gvm` go through [`HttpClient`].
+//! Using a single client ensures consistent timeout and header settings
 //! across the go.dev API, the GitHub Releases API, and binary downloads.
 //!
 //! When the `--verbose` / `-v` flag is passed, [`log_request`] and
 //! [`log_response`] print HTTP negotiation details to stderr so the user
 //! can diagnose connectivity, redirects, and server behaviour.
-//!
-//! [`set_retries`] configures the download engine's retry limit; its value
-//! is read from the `--retries` CLI flag and applied globally before any
-//! download begins.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
 use colored::Colorize;
 
-/// Set to `true` by `main` when the user passes `--verbose` / `-v`.
-static VERBOSE: AtomicBool = AtomicBool::new(false);
-
-/// Maximum retry attempts on network failure (default: 3).
-static RETRIES: AtomicU8 = AtomicU8::new(3);
-
-/// Activates (or deactivates) verbose HTTP logging for the process lifetime.
-pub fn set_verbose(v: bool) {
-    VERBOSE.store(v, Ordering::Relaxed);
+/// HTTP client configuration shared across all requests.
+#[derive(Debug, Clone)]
+pub struct HttpClient {
+    agent: ureq::Agent,
+    verbose: bool,
+    retries: u8,
 }
 
-/// Returns `true` when verbose mode is active.
-pub fn is_verbose() -> bool {
-    VERBOSE.load(Ordering::Relaxed)
+impl HttpClient {
+    /// Creates a new `HttpClient` with the given verbosity and retry settings.
+    pub fn new(verbose: bool, retries: u8) -> Result<Self> {
+        let agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(15)))
+            .user_agent(format!("gvm/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .new_agent();
+        Ok(Self {
+            agent,
+            verbose,
+            retries,
+        })
+    }
+
+    /// Returns the underlying `ureq` agent.
+    pub fn agent(&self) -> &ureq::Agent {
+        &self.agent
+    }
+
+    /// Returns `true` when verbose mode is active.
+    pub fn is_verbose(&self) -> bool {
+        self.verbose
+    }
+
+    /// Returns the configured retry limit.
+    pub fn retries(&self) -> u8 {
+        self.retries
+    }
 }
 
 /// Logs an outgoing HTTP request line to stderr when verbose mode is active.
-pub fn log_request(method: &str, url: &str) {
-    if is_verbose() {
+pub fn log_request(client: &HttpClient, method: &str, url: &str) {
+    if client.is_verbose() {
         eprintln!("  {} > {} {}", "[v]".dimmed(), method.bold(), url);
     }
 }
@@ -45,8 +63,13 @@ pub fn log_request(method: &str, url: &str) {
 /// verbose mode is active.
 ///
 /// `headers` is the `http::HeaderMap` returned by `ureq::Response::headers()`.
-pub fn log_response(status: u16, reason: &str, headers: &ureq::http::HeaderMap) {
-    if is_verbose() {
+pub fn log_response(
+    client: &HttpClient,
+    status: u16,
+    reason: &str,
+    headers: &ureq::http::HeaderMap,
+) {
+    if client.is_verbose() {
         eprintln!(
             "  {} < {} {}",
             "[v]".dimmed(),
@@ -63,30 +86,4 @@ pub fn log_response(status: u16, reason: &str, headers: &ureq::http::HeaderMap) 
         }
         eprintln!();
     }
-}
-
-/// Sets the maximum number of retry attempts on network failure.
-pub fn set_retries(n: u8) {
-    RETRIES.store(n, Ordering::Relaxed);
-}
-
-/// Returns the configured retry limit.
-pub fn retries() -> u8 {
-    RETRIES.load(Ordering::Relaxed)
-}
-
-/// Builds and returns a `ureq` agent configured for gvm's needs.
-///
-/// - `timeout_connect`: 15 seconds covers DNS + TCP + TLS handshake.
-///   Fails fast on unreachable networks (e.g. Termux with no internet).
-///   Does not limit body transfer time so large Go tarballs can download
-///   on slow connections.
-///
-/// - `User-Agent`: identifies the gvm version in server logs.
-pub fn agent() -> Result<ureq::Agent> {
-    Ok(ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(15)))
-        .user_agent(format!("gvm/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .new_agent())
 }

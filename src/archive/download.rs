@@ -17,7 +17,7 @@
 //! `Range: bytes=N-` request. If the server ignores the Range header (no
 //! `Accept-Ranges` support) the transfer restarts from scratch.
 //!
-//! On any network error the download retries up to [`http::retries()`]
+//! On any network error the download retries up to [`HttpClient::retries`]
 //! times using exponential back-off (1 s, 2 s, 4 s, …).
 //!
 //! [`verify_sha256`] checks the integrity of a completed file against the
@@ -34,27 +34,24 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::http;
+use crate::http::HttpClient;
 
 /// Size of the buffer used to read the response body. Large enough to keep
 /// per-syscall overhead low and let the single stream use as much of the
 /// link's throughput as possible.
 const READ_BUF_SIZE: usize = 1024 * 1024;
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
 /// Downloads `url` to `dest` over a single HTTP stream.
 ///
-/// Reads the retry limit from the global populated by the `--retries` CLI
-/// flag.
+/// Reads the retry limit from the `HttpClient`.
 ///
 /// # Errors
 ///
 /// Returns an error if the server is unreachable, all retries are
 /// exhausted, or `dest` cannot be written to.
-pub fn fetch(url: &str, dest: &Path) -> Result<()> {
-    let retries = http::retries();
-    fetch_single(url, dest, retries)
+pub fn fetch(client: &HttpClient, url: &str, dest: &Path) -> Result<()> {
+    let retries = client.retries();
+    fetch_single(client, url, dest, retries)
 }
 
 /// Verifies the SHA-256 digest of `file` against the `expected` hex string.
@@ -100,17 +97,15 @@ pub fn verify_sha256(file: &Path, expected: &str) -> Result<()> {
     Ok(())
 }
 
-// ── Download ─────────────────────────────────────────────────────────────────
-
 /// Single-connection download with retry and transparent resume.
-fn fetch_single(url: &str, dest: &Path, retries: u8) -> Result<()> {
+fn fetch_single(client: &HttpClient, url: &str, dest: &Path, retries: u8) -> Result<()> {
     let part = part_path(dest);
     let mut attempt = 0u8;
 
     loop {
         let existing = part.metadata().map(|m| m.len()).unwrap_or(0);
 
-        match try_fetch(url, &part, existing) {
+        match try_fetch(client, url, &part, existing) {
             Ok(()) => {
                 std::fs::rename(&part, dest)
                     .with_context(|| format!("Cannot finalise {}", dest.display()))?;
@@ -139,10 +134,11 @@ fn fetch_single(url: &str, dest: &Path, retries: u8) -> Result<()> {
 /// Sizes the progress bar from the GET response's own headers - no separate
 /// HEAD request, so there is only ever one redirect round-trip per attempt
 /// instead of two.
-fn try_fetch(url: &str, part: &Path, offset: u64) -> Result<()> {
-    http::log_request("GET", url);
+fn try_fetch(client: &HttpClient, url: &str, part: &Path, offset: u64) -> Result<()> {
+    crate::http::log_request(client, "GET", url);
 
-    let mut req = http::agent()?
+    let mut req = client
+        .agent()
         .get(url)
         // Prevent transparent gzip so the raw binary body is never decoded.
         .header("Accept-Encoding", "identity");
@@ -154,7 +150,8 @@ fn try_fetch(url: &str, part: &Path, offset: u64) -> Result<()> {
         .call()
         .with_context(|| format!("Failed to connect to {url}"))?;
 
-    http::log_response(
+    crate::http::log_response(
+        client,
         response.status().as_u16(),
         response.status().canonical_reason().unwrap_or(""),
         response.headers(),
@@ -216,8 +213,6 @@ fn try_fetch(url: &str, part: &Path, offset: u64) -> Result<()> {
     pb.finish_and_clear();
     result
 }
-
-// ── Utilities ─────────────────────────────────────────────────────────────────
 
 /// Returns the path used for the in-progress download: `"{dest}.part"`.
 fn part_path(dest: &Path) -> PathBuf {

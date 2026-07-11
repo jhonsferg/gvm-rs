@@ -11,10 +11,11 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
-/// Runtime configuration loaded at startup.
+/// Immutable configuration loaded at startup.
 ///
 /// All path helpers are derived from the single [`root`](Config::root) field
 /// so the entire directory tree moves atomically when `GVM_DIR` is set.
+#[derive(Debug)]
 pub struct Config {
     /// Root directory for all gvm data (default: `~/.gvm`).
     pub root: PathBuf,
@@ -97,18 +98,102 @@ impl Config {
     pub fn default_packages_file(&self) -> PathBuf {
         self.root.join("default-packages")
     }
+}
 
-    /// Creates the [`versions_dir`](Self::versions_dir) and
-    /// [`tmp_dir`](Self::tmp_dir) directories if they do not already exist.
+/// Mutation operations on the config directory.
+///
+/// Separated from [`Config`] to follow the Interface Segregation Principle:
+/// callers that only need path queries don't need mutation capabilities.
+pub trait ConfigMut {
+    /// Creates the [`versions_dir`](Config::versions_dir) and
+    /// [`tmp_dir`](Config::tmp_dir) directories if they do not already exist.
     ///
     /// # Errors
     ///
     /// Returns an error if either directory cannot be created (e.g. permission
     /// denied).
-    pub fn ensure_dirs(&self) -> Result<()> {
+    fn ensure_dirs(&self) -> anyhow::Result<()>;
+}
+
+impl ConfigMut for Config {
+    fn ensure_dirs(&self) -> anyhow::Result<()> {
         std::fs::create_dir_all(self.versions_dir())
             .context("Failed to create versions directory")?;
         std::fs::create_dir_all(self.tmp_dir()).context("Failed to create tmp directory")?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn config_load_uses_gvm_dir() {
+        let dir = tempdir().unwrap();
+        std::env::set_var("GVM_DIR", dir.path());
+        let config = Config::load().unwrap();
+        assert_eq!(config.root, dir.path());
+        std::env::remove_var("GVM_DIR");
+    }
+
+    #[test]
+    fn config_load_defaults_to_home_gvm() {
+        std::env::remove_var("GVM_DIR");
+        let config = Config::load().unwrap();
+        assert!(config.root.ends_with(".gvm"));
+    }
+
+    #[test]
+    fn config_paths_are_derived_from_root() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+
+        assert_eq!(config.versions_dir(), dir.path().join("versions"));
+        assert_eq!(config.tmp_dir(), dir.path().join("tmp"));
+        assert_eq!(config.version_file(), dir.path().join("version"));
+        assert_eq!(
+            config.version_dir("go1.22.4"),
+            dir.path().join("versions/go1.22.4")
+        );
+        assert_eq!(
+            config.version_bin_dir("go1.22.4"),
+            dir.path().join("versions/go1.22.4/bin")
+        );
+        assert_eq!(config.current_dir(), dir.path().join("current"));
+        assert_eq!(
+            config.default_packages_file(),
+            dir.path().join("default-packages")
+        );
+    }
+
+    #[test]
+    fn config_ensure_dirs_creates_directories() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+
+        config.ensure_dirs().unwrap();
+
+        assert!(dir.path().join("versions").exists());
+        assert!(dir.path().join("tmp").exists());
+    }
+
+    #[test]
+    fn config_ensure_dirs_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+
+        config.ensure_dirs().unwrap();
+        config.ensure_dirs().unwrap(); // Should not fail on second call
+
+        assert!(dir.path().join("versions").exists());
+        assert!(dir.path().join("tmp").exists());
     }
 }

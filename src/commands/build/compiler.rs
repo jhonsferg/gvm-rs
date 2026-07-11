@@ -1,211 +1,16 @@
-//! `gvm build` - compile a Go version from source.
-//!
-//! Unlike `gvm install` which downloads a precompiled binary, this command
-//! fetches the official Go source tarball from go.dev, locates or downloads a
-//! suitable bootstrap compiler, and runs the platform build script
-//! (`src/make.bash` on Unix, `src/make.bat` on Windows) to produce a fully
-//! functional Go toolchain installed into `~/.gvm/versions/go<X>.<Y>.<Z>/`.
-//!
-//! # Steps
-//!
-//! 1. Resolve the requested version against the go.dev release index.
-//! 2. Skip if already installed (unless `--force`).
-//! 3. Find the source tarball (`kind == "source"`) in the release.
-//! 4. Resolve the bootstrap compiler (explicit `--bootstrap`, previous patch if
-//!    installed locally, or a temporarily downloaded previous patch/minor release).
-//! 5. Download and verify the source tarball.
-//! 6. Extract to a unique staging directory.
-//! 7. Run the build script with `GOROOT_BOOTSTRAP` and any user-supplied env vars.
-//! 8. Move the compiled tree to `~/.gvm/versions/<tag>/`.
-//! 9. Clean up staging and temporary bootstrap directories.
+//! Go compiler invocation for building from source.
 
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use crate::{
-    archive::{download, extract},
-    commands::bootstrap,
-    config::{Config, ConfigMut},
-    fs as gvm_fs,
-    http::HttpClient,
-    lock,
-    remote::index,
-    tempdir::TempDir,
-    toolchain,
-    user_version::VersionSpec,
-};
-
-/// Compiles `version_str` from source and installs it to the gvm versions store.
-pub fn run(
-    config: &Config,
-    client: &HttpClient,
-    version_str: &str,
-    force: bool,
-    no_cgo: bool,
-    bootstrap_spec: Option<&str>,
-    env_vars: &[String],
-) -> Result<()> {
-    config.ensure_dirs()?;
-
-    // Resolve version against the remote index.
-    let spec = VersionSpec::parse(version_str)?;
-    println!("{} Fetching available Go versions...", "->".cyan());
-    let releases = index::fetch_releases(client)?;
-    let release = index::resolve(&spec, &releases)?;
-    let version = release
-        .go_version()
-        .ok_or_else(|| anyhow!("Could not parse version tag '{}'", release.version))?;
-
-    // Bail out early if already installed (unless --force).
-    if toolchain::is_installed(config, &version) {
-        if force {
-            println!(
-                "{} Removing existing Go {} installation...",
-                "->".cyan(),
-                version.tag().bold()
-            );
-            std::fs::remove_dir_all(config.version_dir(&version.tag()))
-                .context("Failed to remove existing installation")?;
-        } else {
-            println!(
-                "{} Go {} is already installed.",
-                "✓".green(),
-                version.tag().bold()
-            );
-            println!("  Use {} to rebuild from source.", "--force".cyan());
-            return Ok(());
-        }
-    }
-
-    // Locate the source tarball entry for this release.
-    let src_file = release.source_file().ok_or_else(|| {
-        anyhow!(
-            "No source tarball found for {}. \
-             Source tarballs are only available for stable releases.",
-            version.tag()
-        )
-    })?;
-
-    println!();
-    println!(
-        "  {} Building {} from source.",
-        "->".cyan(),
-        version.tag().bold()
-    );
-    println!(
-        "  {} This will take 5-15 minutes and requires ~3 GB of disk space.",
-        "!".yellow()
-    );
-    println!();
-
-    // Resolve the bootstrap compiler before downloading source.
-    let bootstrap =
-        bootstrap::resolve_bootstrap(config, client, &version, bootstrap_spec, &releases)?;
-    println!("{} Bootstrap: {}", "->".cyan(), bootstrap.label.bold());
-
-    // Download source tarball.
-    let src_archive = config.tmp_dir().join(&src_file.filename);
-    println!(
-        "{} Downloading {}...",
-        "->".cyan(),
-        src_file.filename.bold()
-    );
-    if let Err(e) = download::fetch(
-        client,
-        &index::download_url(&src_file.filename),
-        &src_archive,
-    ) {
-        let _ = std::fs::remove_file(&src_archive);
-        bootstrap::cleanup_bootstrap(&bootstrap);
-        return Err(e).context("Failed to download source tarball");
-    }
-
-    // Verify SHA-256 checksum.
-    if !src_file.sha256.is_empty() {
-        println!("{} Verifying checksum...", "->".cyan());
-        if let Err(e) = download::verify_sha256(&src_archive, &src_file.sha256) {
-            let _ = std::fs::remove_file(&src_archive);
-            bootstrap::cleanup_bootstrap(&bootstrap);
-            return Err(e);
-        }
-    }
-
-    // Extract source into a unique staging dir to avoid races with other commands.
-    let staging_dir = TempDir::new_in(config.tmp_dir(), format!("src-{}", version.tag()))?;
-
-    if let Err(e) = extract::unpack(&src_archive, staging_dir.path()) {
-        let _ = std::fs::remove_file(&src_archive);
-        bootstrap::cleanup_bootstrap(&bootstrap);
-        return Err(e).context("Failed to extract source tarball");
-    }
-    let _ = std::fs::remove_file(&src_archive);
-
-    // The Go source tarball always extracts to a `go/` subdirectory.
-    let source_root = staging_dir.path().join("go");
-    if !source_root.exists() {
-        bootstrap::cleanup_bootstrap(&bootstrap);
-        anyhow::bail!(
-            "Unexpected archive layout: expected 'go/' inside {}",
-            staging_dir.path().display()
-        );
-    }
-
-    // Prevent auto-cleanup of staging dir
-    staging_dir.keep();
-
-    println!("{} Compiling Go {}...", "->".cyan(), version.tag().bold());
-    if !client.is_verbose() {
-        println!(
-            "  {} This will take 5-15 minutes. Run with {} to see build output.",
-            "i".yellow(),
-            "-v".cyan()
-        );
-    }
-    println!();
-
-    let compiled = compile(
-        client,
-        &source_root,
-        &bootstrap.path,
-        no_cgo,
-        env_vars,
-        &config.tmp_dir(),
-    );
-    bootstrap::cleanup_bootstrap(&bootstrap);
-
-    // TempDir will auto-cleanup on drop if compilation failed
-    compiled?;
-
-    // Move the compiled tree to the versions store.
-    let dest = config.version_dir(&version.tag());
-    let lock_path = config.root.join(".lock");
-    if let Err(e) = lock::with_lock(&lock_path, || gvm_fs::move_dir(&source_root, &dest)) {
-        // TempDir will auto-cleanup on drop
-        return Err(e).context("Failed to move compiled Go to versions directory");
-    }
-
-    // TempDir will auto-cleanup on drop
-
-    println!();
-    println!(
-        "{} Go {} built and installed successfully.",
-        "✓".green(),
-        version.tag().bold()
-    );
-    println!(
-        "  Run {} to activate.",
-        format!("gvm use {}", version).cyan()
-    );
-
-    Ok(())
-}
+use crate::{http::HttpClient, lock};
 
 /// Runs the Go build script inside `source_root` with the supplied environment.
 ///
@@ -219,7 +24,7 @@ pub fn run(
 /// `gvm_tmp` is the gvm scratch directory (`~/.gvm/tmp/`). A process-unique
 /// subdirectory is created there and passed as `TEMP`/`TMP`/`TMPDIR` so that
 /// Go's intermediate artifacts never leave `~/.gvm/`.
-fn compile(
+pub fn compile(
     client: &HttpClient,
     source_root: &Path,
     bootstrap_path: &Path,
@@ -243,7 +48,9 @@ fn compile(
             );
         }
         let mut c = std::process::Command::new("cmd.exe");
-        c.args(["/c", script.to_str().unwrap_or("make.bat")]);
+        // Properly quote the script path for cmd.exe /c to handle spaces
+        let script_arg = format!("\"{}\"", script.display());
+        c.args(["/c", &script_arg]);
         ("make.bat", c)
     };
 
