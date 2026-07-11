@@ -308,6 +308,13 @@ jobs:
               echo ""
             fi
 
+            REFACTORS=$(git log "$RANGE" --format="%s" | grep -E '^refactor(\([^)]*\))?:' | sed 's/^refactor[^:]*: //' || true)
+            if [ -n "$REFACTORS" ]; then
+              echo "### Refactoring"
+              while IFS= read -r l; do [ -n "$l" ] && echo "- $l"; done <<< "$REFACTORS"
+              echo ""
+            fi
+
             SECURITY=$(git log "$RANGE" --format="%s" | grep -E '^security(\([^)]*\))?:' | sed 's/^security[^:]*: //' || true)
             if [ -n "$SECURITY" ]; then
               echo "### Security"
