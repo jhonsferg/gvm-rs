@@ -19,6 +19,7 @@ use crate::{
     archive::{download, extract},
     config::Config,
     fs as gvm_fs,
+    http::HttpClient,
     remote::index,
     toolchain,
     user_version::VersionSpec,
@@ -39,13 +40,13 @@ use crate::{
 /// - The archive download fails or the checksum does not match.
 /// - Extraction fails.
 /// - The extracted directory cannot be moved to the versions store.
-pub fn run(config: &Config, spec_str: &str, force: bool) -> Result<()> {
+pub fn run(config: &Config, client: &HttpClient, spec_str: &str, force: bool) -> Result<()> {
     config.ensure_dirs()?;
 
     let spec = VersionSpec::parse(spec_str)?;
 
     println!("{} Fetching available Go versions...", "->".cyan());
-    let releases = index::fetch_releases()?;
+    let releases = index::fetch_releases(client)?;
     let release = index::resolve(&spec, &releases)?;
 
     let version = release
@@ -85,7 +86,7 @@ pub fn run(config: &Config, spec_str: &str, force: bool) -> Result<()> {
     let archive_path = config.tmp_dir().join(&file.filename);
 
     println!("{} Downloading {}...", "->".cyan(), file.filename.bold());
-    let dl_result = download::fetch(&url, &archive_path);
+    let dl_result = download::fetch(client, &url, &archive_path);
     if let Err(e) = dl_result {
         let _ = std::fs::remove_file(&archive_path);
         return Err(e);
