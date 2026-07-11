@@ -48,7 +48,9 @@ pub fn compile(
             );
         }
         let mut c = std::process::Command::new("cmd.exe");
-        c.args(["/c", script.to_str().unwrap_or("make.bat")]);
+        // Properly quote the script path for cmd.exe /c to handle spaces
+        let script_arg = format!("\"{}\"", script.display());
+        c.args(["/c", &script_arg]);
         ("make.bat", c)
     };
 
