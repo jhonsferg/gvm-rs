@@ -54,8 +54,17 @@ pub struct CommandRegistry {
     commands: HashMap<String, Box<dyn Command>>,
 }
 
+impl std::fmt::Debug for CommandRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandRegistry")
+            .field("command_count", &self.commands.len())
+            .field("commands", &self.commands.keys().collect::<Vec<_>>())
+            .finish()
+}
+}
+
+/// Creates a new empty registry.
 impl CommandRegistry {
-    /// Creates a new empty registry.
     pub fn new() -> Self {
         Self {
             commands: HashMap::new(),
@@ -122,16 +131,19 @@ pub fn registry() -> &'static CommandRegistry {
     COMMAND_REGISTRY.get().expect("Command registry not initialized")
 }
 
-/// Builds and registers all built-in commands.
-///
-/// Called once at startup from `main()`.
-pub fn register_commands() -> CommandRegistry {
+/// Builds the complete command registry with all built-in commands.
+pub fn build_registry() -> CommandRegistry {
     let mut registry = CommandRegistry::new();
 
-    // Built-in commands will be registered here
-    // TODO: Migrate each command to implement the Command trait
+    // TODO: Register all commands here
 
     registry
+}
+
+/// Registers all commands in the global registry.
+pub fn register_commands() {
+    let registry = build_registry();
+    COMMAND_REGISTRY.set(registry).expect("Registry already initialized");
 }
 
 #[cfg(test)]
