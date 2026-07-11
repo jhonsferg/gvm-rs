@@ -89,7 +89,12 @@ mod tests {
         let parent = TempDir::new().unwrap();
         let child = TempDir::new_in(parent.path(), "child-").unwrap();
         assert!(child.path().starts_with(parent.path()));
-        assert!(child.path().file_name().unwrap().to_string_lossy().starts_with("child-"));
+        assert!(child
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("child-"));
     }
 
     #[test]

@@ -2,7 +2,13 @@
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::{archive::download, config::Config, http::HttpClient, remote::{index, release::Release}, tempdir::TempDir};
+use crate::{
+    archive::download,
+    config::Config,
+    http::HttpClient,
+    remote::{index, release::Release},
+    tempdir::TempDir,
+};
 
 /// Downloads and verifies the Go source tarball for the given release.
 pub fn download_source(
@@ -10,7 +16,7 @@ pub fn download_source(
     config: &Config,
     release: &Release,
     version: &crate::version::GoVersion,
-) -> Result<PathBuf> {
+) -> Result<std::path::PathBuf> {
     let src_file = release.source_file().ok_or_else(|| {
         anyhow!(
             "No source tarball found for {}. \
@@ -42,11 +48,10 @@ pub fn download_source(
 
 /// Extracts the source tarball to a staging directory.
 pub fn extract_source(
-    archive_path: &Path,
+    archive_path: &std::path::Path,
     config: &Config,
     version_tag: &str,
-) -> Result<PathBuf> {
-    // Extract source into a unique staging dir using TempDir for auto-cleanup
+) -> Result<std::path::PathBuf> {
     let staging_dir = TempDir::new_in(config.tmp_dir(), format!("src-{}", version_tag))?;
 
     crate::archive::extract::unpack(archive_path, staging_dir.path())
