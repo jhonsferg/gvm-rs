@@ -148,21 +148,34 @@ mod tests {
     #[test]
     fn config_paths_are_derived_from_root() {
         let dir = tempdir().unwrap();
-        let config = Config { root: dir.path().to_path_buf() };
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
 
         assert_eq!(config.versions_dir(), dir.path().join("versions"));
         assert_eq!(config.tmp_dir(), dir.path().join("tmp"));
         assert_eq!(config.version_file(), dir.path().join("version"));
-        assert_eq!(config.version_dir("go1.22.4"), dir.path().join("versions/go1.22.4"));
-        assert_eq!(config.version_bin_dir("go1.22.4"), dir.path().join("versions/go1.22.4/bin"));
+        assert_eq!(
+            config.version_dir("go1.22.4"),
+            dir.path().join("versions/go1.22.4")
+        );
+        assert_eq!(
+            config.version_bin_dir("go1.22.4"),
+            dir.path().join("versions/go1.22.4/bin")
+        );
         assert_eq!(config.current_dir(), dir.path().join("current"));
-        assert_eq!(config.default_packages_file(), dir.path().join("default-packages"));
+        assert_eq!(
+            config.default_packages_file(),
+            dir.path().join("default-packages")
+        );
     }
 
     #[test]
     fn config_ensure_dirs_creates_directories() {
         let dir = tempdir().unwrap();
-        let config = Config { root: dir.path().to_path_buf() };
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
 
         config.ensure_dirs().unwrap();
 
@@ -173,7 +186,9 @@ mod tests {
     #[test]
     fn config_ensure_dirs_is_idempotent() {
         let dir = tempdir().unwrap();
-        let config = Config { root: dir.path().to_path_buf() };
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
 
         config.ensure_dirs().unwrap();
         config.ensure_dirs().unwrap(); // Should not fail on second call
