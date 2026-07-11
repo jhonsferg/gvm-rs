@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::{archive::download, config::Config, http::HttpClient, remote::{index, release::Release}};
+use crate::{archive::download, config::Config, http::HttpClient, remote::{index, release::Release}, tempdir::TempDir};
 
 /// Downloads and verifies the Go source tarball for the given release.
 pub fn download_source(
@@ -46,27 +46,24 @@ pub fn extract_source(
     config: &Config,
     version_tag: &str,
 ) -> Result<PathBuf> {
-    // Extract source into a unique staging dir to avoid races with other commands.
-    let staging = config.tmp_dir().join(format!("src-{}", version_tag));
-    if staging.exists() {
-        std::fs::remove_dir_all(&staging)?;
-    }
-    std::fs::create_dir_all(&staging)?;
+    // Extract source into a unique staging dir using TempDir for auto-cleanup
+    let staging_dir = TempDir::new_in(config.tmp_dir(), format!("src-{}", version_tag))?;
 
-    crate::archive::extract::unpack(archive_path, &staging)
+    crate::archive::extract::unpack(archive_path, staging_dir.path())
         .context("Failed to extract source tarball")?;
 
     let _ = std::fs::remove_file(archive_path);
 
     // The Go source tarball always extracts to a `go/` subdirectory.
-    let source_root = staging.join("go");
+    let source_root = staging_dir.path().join("go");
     if !source_root.exists() {
-        let _ = std::fs::remove_dir_all(&staging);
         anyhow::bail!(
             "Unexpected archive layout: expected 'go/' inside {}",
-            staging.display()
+            staging_dir.path().display()
         );
     }
 
+    // Prevent auto-cleanup since we want to keep the extracted source
+    staging_dir.keep();
     Ok(source_root)
 }

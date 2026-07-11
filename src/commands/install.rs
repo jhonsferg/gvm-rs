@@ -22,6 +22,7 @@ use crate::{
     http::HttpClient,
     lock,
     remote::index,
+    tempdir::TempDir,
     toolchain,
     user_version::VersionSpec,
 };
@@ -102,23 +103,21 @@ pub fn run(config: &Config, client: &HttpClient, spec_str: &str, force: bool) ->
         return Err(e);
     }
 
-    // Remove any stale extracted tree left by a previously interrupted install.
-    let extracted = config.tmp_dir().join("go");
-    if extracted.exists() {
-        std::fs::remove_dir_all(&extracted)?;
-    }
+    // Use TempDir for extraction - auto-cleanup on drop
+    let staging_dir = TempDir::new_in(config.tmp_dir(), "gvm-install-")?;
 
-    let extract_result = extract::unpack(&archive_path, &config.tmp_dir());
+    let extract_result = extract::unpack(&archive_path, staging_dir.path());
     if let Err(e) = extract_result {
-        let _ = std::fs::remove_file(&archive_path);
-        let _ = std::fs::remove_dir_all(&extracted);
+        // staging_dir will auto-cleanup on drop
         return Err(e);
     }
 
+    let extracted = staging_dir.path().join("go");
     let dest = config.version_dir(&version.tag());
     let lock_path = config.root.join(".lock");
     lock::with_lock(&lock_path, || gvm_fs::move_dir(&extracted, &dest))?;
     let _ = std::fs::remove_file(&archive_path);
+    // staging_dir will auto-cleanup on drop
 
     println!(
         "{} Go {} installed successfully.",

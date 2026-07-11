@@ -37,6 +37,7 @@ use crate::{
     http::HttpClient,
     lock,
     remote::index,
+    tempdir::TempDir,
     toolchain,
     user_version::VersionSpec,
 };
@@ -137,30 +138,27 @@ pub fn run(
     }
 
     // Extract source into a unique staging dir to avoid races with other commands.
-    let staging = config.tmp_dir().join(format!("src-{}", version.tag()));
-    if staging.exists() {
-        std::fs::remove_dir_all(&staging)?;
-    }
-    std::fs::create_dir_all(&staging)?;
+    let staging_dir = TempDir::new_in(config.tmp_dir(), format!("src-{}", version.tag()))?;
 
-    if let Err(e) = extract::unpack(&src_archive, &staging) {
+    if let Err(e) = extract::unpack(&src_archive, staging_dir.path()) {
         let _ = std::fs::remove_file(&src_archive);
-        let _ = std::fs::remove_dir_all(&staging);
         bootstrap::cleanup_bootstrap(&bootstrap);
         return Err(e).context("Failed to extract source tarball");
     }
     let _ = std::fs::remove_file(&src_archive);
 
     // The Go source tarball always extracts to a `go/` subdirectory.
-    let source_root = staging.join("go");
+    let source_root = staging_dir.path().join("go");
     if !source_root.exists() {
-        let _ = std::fs::remove_dir_all(&staging);
         bootstrap::cleanup_bootstrap(&bootstrap);
         anyhow::bail!(
             "Unexpected archive layout: expected 'go/' inside {}",
-            staging.display()
+            staging_dir.path().display()
         );
     }
+
+    // Prevent auto-cleanup of staging dir
+    staging_dir.keep();
 
     println!("{} Compiling Go {}...", "->".cyan(), version.tag().bold());
     if !client.is_verbose() {
@@ -183,7 +181,7 @@ pub fn run(
     bootstrap::cleanup_bootstrap(&bootstrap);
 
     if let Err(e) = compiled {
-        let _ = std::fs::remove_dir_all(&staging);
+        // TempDir will auto-cleanup on drop
         return Err(e);
     }
 
@@ -191,11 +189,11 @@ pub fn run(
     let dest = config.version_dir(&version.tag());
     let lock_path = config.root.join(".lock");
     if let Err(e) = lock::with_lock(&lock_path, || gvm_fs::move_dir(&source_root, &dest)) {
-        let _ = std::fs::remove_dir_all(&staging);
+        // TempDir will auto-cleanup on drop
         return Err(e).context("Failed to move compiled Go to versions directory");
     }
 
-    let _ = std::fs::remove_dir_all(&staging);
+    // TempDir will auto-cleanup on drop
 
     println!();
     println!(
