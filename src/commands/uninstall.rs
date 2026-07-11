@@ -6,7 +6,7 @@
 use anyhow::{bail, Result};
 use colored::Colorize;
 
-use crate::{config::Config, toolchain, user_version::VersionSpec};
+use crate::{config::Config, lock, toolchain, user_version::VersionSpec};
 
 /// Removes the Go version described by `spec_str` from the local store.
 ///
@@ -38,7 +38,8 @@ pub fn run(config: &Config, spec_str: &str) -> Result<()> {
     }
 
     let dir = config.version_dir(&version.tag());
-    std::fs::remove_dir_all(&dir)?;
+    let lock_path = config.root.join(".lock");
+    lock::with_lock(&lock_path, || Ok(std::fs::remove_dir_all(&dir)?))?;
 
     println!("{} Go {} uninstalled.", "✓".green(), version.tag().bold());
     Ok(())
