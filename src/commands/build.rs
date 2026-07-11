@@ -34,6 +34,7 @@ use crate::{
     config::Config,
     fs as gvm_fs,
     http::HttpClient,
+    lock,
     remote::{index, release::Release},
     toolchain,
     user_version::VersionSpec,
@@ -195,7 +196,8 @@ pub fn run(
 
     // Move the compiled tree to the versions store.
     let dest = config.version_dir(&version.tag());
-    if let Err(e) = gvm_fs::move_dir(&source_root, &dest) {
+    let lock_path = config.root.join(".lock");
+    if let Err(e) = lock::with_lock(&lock_path, || gvm_fs::move_dir(&source_root, &dest)) {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(e).context("Failed to move compiled Go to versions directory");
     }
