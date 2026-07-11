@@ -20,6 +20,7 @@ use crate::{
     config::Config,
     fs as gvm_fs,
     http::HttpClient,
+    lock,
     remote::index,
     toolchain,
     user_version::VersionSpec,
@@ -60,7 +61,10 @@ pub fn run(config: &Config, client: &HttpClient, spec_str: &str, force: bool) ->
                 "->".cyan(),
                 version.tag().bold()
             );
-            std::fs::remove_dir_all(config.version_dir(&version.tag()))?;
+            let lock_path = config.root.join(".lock");
+            lock::with_lock(&lock_path, || {
+                Ok(std::fs::remove_dir_all(config.version_dir(&version.tag()))?)
+            })?;
         } else {
             println!(
                 "{} Go {} is already installed.",
@@ -112,7 +116,8 @@ pub fn run(config: &Config, client: &HttpClient, spec_str: &str, force: bool) ->
     }
 
     let dest = config.version_dir(&version.tag());
-    gvm_fs::move_dir(&extracted, &dest)?;
+    let lock_path = config.root.join(".lock");
+    lock::with_lock(&lock_path, || gvm_fs::move_dir(&extracted, &dest))?;
     let _ = std::fs::remove_file(&archive_path);
 
     println!(
