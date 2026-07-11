@@ -5,20 +5,22 @@ use crate::{
     config::Config,
     http::HttpClient,
     remote::{index, release::Release},
+    tempdir::TempDir,
     toolchain,
     user_version::VersionSpec,
     version::GoVersion,
 };
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
+use std::path::PathBuf;
 
 /// Represents a resolved bootstrap compiler.
 #[derive(Debug)]
 pub struct Bootstrap {
     /// Directory passed as `GOROOT_BOOTSTRAP` to `make.bash`.
-    pub path: std::path::PathBuf,
-    /// If set, this directory is removed after compilation (temp download).
-    pub cleanup: Option<std::path::PathBuf>,
+    pub path: PathBuf,
+    /// If set, this temporary directory is removed after compilation (temp download).
+    cleanup: Option<TempDir>,
     pub label: String,
 }
 
@@ -101,9 +103,8 @@ pub fn resolve_bootstrap(
             )
         })?;
 
-    let bootstrap_staging = config
-        .tmp_dir()
-        .join(format!("bootstrap-{}", b_version.tag()));
+    // Create a TempDir for the bootstrap staging - it will auto-cleanup on drop
+    let staging_dir = TempDir::new_in(config.tmp_dir(), format!("bootstrap-{}", b_version.tag()))?;
 
     println!(
         "{} Downloading bootstrap {} (temporary, removed after build)...",
@@ -127,35 +128,26 @@ pub fn resolve_bootstrap(
         }
     }
 
-    if bootstrap_staging.exists() {
-        std::fs::remove_dir_all(&bootstrap_staging)?;
-    }
-    std::fs::create_dir_all(&bootstrap_staging)?;
-
-    if let Err(e) = extract::unpack(&archive_path, &bootstrap_staging) {
-        let _ = std::fs::remove_file(&archive_path);
-        let _ = std::fs::remove_dir_all(&bootstrap_staging);
-        return Err(e).context("Failed to extract bootstrap compiler");
-    }
+    extract::unpack(&archive_path, staging_dir.path())
+        .context("Failed to extract bootstrap compiler")?;
     let _ = std::fs::remove_file(&archive_path);
 
     // Bootstrap archive also extracts to a `go/` subdirectory.
-    let bootstrap_root = bootstrap_staging.join("go");
+    let bootstrap_root = staging_dir.path().join("go");
     if !bootstrap_root.exists() {
-        let _ = std::fs::remove_dir_all(&bootstrap_staging);
         anyhow::bail!("Bootstrap archive had an unexpected layout");
     }
 
+    // Keep the TempDir so it cleans up when Bootstrap is dropped
     Ok(Bootstrap {
         path: bootstrap_root,
-        cleanup: Some(bootstrap_staging),
+        cleanup: Some(staging_dir),
         label: format!("{} (downloaded temporarily)", b_version.tag()),
     })
 }
 
-/// Removes the temporary bootstrap directory, if any.
-pub fn cleanup_bootstrap(b: &Bootstrap) {
-    if let Some(dir) = &b.cleanup {
-        let _ = std::fs::remove_dir_all(dir);
-    }
+/// No explicit cleanup needed - TempDir cleans up automatically on drop.
+#[allow(dead_code)]
+pub fn cleanup_bootstrap(_b: &Bootstrap) {
+    // TempDir handles cleanup automatically when Bootstrap is dropped.
 }
