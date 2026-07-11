@@ -15,6 +15,7 @@ use std::path::PathBuf;
 ///
 /// All path helpers are derived from the single [`root`](Config::root) field
 /// so the entire directory tree moves atomically when `GVM_DIR` is set.
+#[derive(Debug)]
 pub struct Config {
     /// Root directory for all gvm data (default: `~/.gvm`).
     pub root: PathBuf,
