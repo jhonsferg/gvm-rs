@@ -32,7 +32,7 @@ use std::time::Duration;
 use crate::{
     archive::{download, extract},
     commands::bootstrap,
-    config::Config,
+    config::{Config, ConfigMut},
     fs as gvm_fs,
     http::HttpClient,
     lock,

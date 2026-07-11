@@ -21,8 +21,14 @@ use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 
 use crate::{
-    config::Config, fs as gvm_fs, http::HttpClient, lock, remote::index, tempdir::TempDir,
-    toolchain, user_version::VersionSpec,
+    config::{Config, ConfigMut},
+    fs as gvm_fs,
+    http::HttpClient,
+    lock,
+    remote::index,
+    tempdir::TempDir,
+    toolchain,
+    user_version::VersionSpec,
 };
 
 /// Downloads and installs the Go version described by `spec_str`.
