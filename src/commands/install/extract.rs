@@ -1,6 +1,6 @@
 //! Archive extraction for `gvm install`.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::{archive::extract, config::Config, tempdir::TempDir};
 

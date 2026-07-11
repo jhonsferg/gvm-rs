@@ -1,6 +1,5 @@
 //! Default packages installation for `gvm install`.
 
-use anyhow::Result;
 use colored::Colorize;
 
 use crate::{config::Config, version::GoVersion};

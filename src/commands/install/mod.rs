@@ -17,16 +17,14 @@ mod default_packages;
 mod download;
 mod extract;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use colored::Colorize;
 
 use crate::{
     config::{Config, ConfigMut},
-    fs as gvm_fs,
     http::HttpClient,
     lock,
     remote::index,
-    tempdir::TempDir,
     toolchain,
     user_version::VersionSpec,
 };
@@ -83,7 +81,7 @@ pub fn run(config: &Config, client: &HttpClient, spec_str: &str, force: bool) ->
     }
 
     // Download and verify the archive.
-    let archive = download::download_archive(client, config, &release, &version)?;
+    let archive = download::download_archive(client, config, release, &version)?;
 
     // Extract to staging directory.
     let source_root = extract::extract_archive(&archive.path, config, &version.tag())?;

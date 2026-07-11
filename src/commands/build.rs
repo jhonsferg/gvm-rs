@@ -180,10 +180,8 @@ pub fn run(
     );
     bootstrap::cleanup_bootstrap(&bootstrap);
 
-    if let Err(e) = compiled {
-        // TempDir will auto-cleanup on drop
-        return Err(e);
-    }
+    // TempDir will auto-cleanup on drop if compilation failed
+    compiled?;
 
     // Move the compiled tree to the versions store.
     let dest = config.version_dir(&version.tag());

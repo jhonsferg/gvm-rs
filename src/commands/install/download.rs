@@ -7,10 +7,7 @@ use crate::{
     archive::download,
     config::Config,
     http::HttpClient,
-    remote::{index, release::Release, release::ReleaseFile},
-    tempdir::TempDir,
-    toolchain,
-    user_version::VersionSpec,
+    remote::{index, release::Release},
     version::GoVersion,
 };
 
@@ -19,7 +16,7 @@ pub fn download_archive(
     client: &HttpClient,
     config: &Config,
     release: &Release,
-    version: &GoVersion,
+    _version: &GoVersion,
 ) -> Result<ReleaseArchive> {
     let file = release
         .archive_for(index::host_os(), index::host_arch())
@@ -42,14 +39,10 @@ pub fn download_archive(
     println!("{} Verifying checksum...", "->".cyan());
     download::verify_sha256(&archive_path, &file.sha256).context("Archive checksum mismatch")?;
 
-    Ok(ReleaseArchive {
-        path: archive_path,
-        file: file.clone(),
-    })
+    Ok(ReleaseArchive { path: archive_path })
 }
 
 /// Archive information returned after download.
 pub struct ReleaseArchive {
     pub path: std::path::PathBuf,
-    pub file: ReleaseFile,
 }

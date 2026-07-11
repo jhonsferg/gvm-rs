@@ -36,10 +36,11 @@ impl TempDir {
     }
 
     /// Consumes the `TempDir` and returns the path without deleting the directory.
+    #[cfg(test)]
     pub fn into_path(mut self) -> PathBuf {
         let inner = self.inner.take().expect("TempDir used after drop");
         let path = inner.path().to_path_buf();
-        inner.keep();
+        let _ = inner.keep();
         path
     }
 
@@ -47,7 +48,7 @@ impl TempDir {
     pub fn keep(mut self) -> PathBuf {
         let inner = self.inner.take().expect("TempDir used after drop");
         let path = inner.path().to_path_buf();
-        inner.keep();
+        let _ = inner.keep();
         path
     }
 }

@@ -27,17 +27,15 @@ impl ProfileBlock {
             lines: lines.into_iter().map(Into::into).collect(),
         }
     }
+}
 
-    /// Serializes the block to a string.
-    pub fn to_string(&self) -> String {
-        let mut s = String::new();
-        s.push_str(&self.marker);
-        s.push('\n');
+impl std::fmt::Display for ProfileBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.marker)?;
         for line in &self.lines {
-            s.push_str(line);
-            s.push('\n');
+            writeln!(f, "{}", line)?;
         }
-        s
+        Ok(())
     }
 }
 
@@ -132,44 +130,49 @@ impl ShellProfile {
         }
     }
 
-    /// Serializes the profile back to a string.
-    pub fn to_string(&self) -> String {
-        let mut out = String::new();
-
+    fn write_to_string<W: std::fmt::Write>(&self, f: &mut W) -> std::fmt::Result {
         // Header
         for line in &self.header {
-            out.push_str(line);
-            out.push('\n');
+            writeln!(f, "{}", line)?;
         }
 
         // Blocks
+        let mut wrote_something = !self.header.is_empty();
         for (i, block) in self.blocks.iter().enumerate() {
             if i > 0 || !self.header.is_empty() {
-                // Add blank line before block if not first or if header exists
-                out.push('\n');
+                writeln!(f)?;
             }
-            out.push_str(&block.to_string());
+            write!(f, "{}", block)?;
+            wrote_something = true;
         }
 
         // Footer
         if !self.footer.is_empty() {
-            // Ensure single blank line before footer
-            if !out.ends_with("\n\n") && !out.is_empty() {
-                out.push('\n');
+            // Ensure single blank line before footer if we wrote something before
+            if wrote_something {
+                writeln!(f)?;
             }
             for line in &self.footer {
-                out.push_str(line);
-                out.push('\n');
+                writeln!(f, "{}", line)?;
             }
         }
 
-        out
+        Ok(())
     }
+}
 
-    /// Checks if the profile has a specific block with expected content.
+impl std::fmt::Display for ShellProfile {
+    #[allow(clippy::inherent_to_string_shadow_display)]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write_to_string(f)
+    }
+}
+
+/// Checks if the profile has a specific block with expected content.
+impl ShellProfile {
     pub fn has_block_with_content(&self, marker: &str, expected_lines: &[String]) -> bool {
         self.get_block(marker)
-            .map(|b| &b.lines == expected_lines)
+            .map(|b| b.lines == expected_lines)
             .unwrap_or(false)
     }
 }

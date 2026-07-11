@@ -20,7 +20,7 @@ pub struct Bootstrap {
     /// Directory passed as `GOROOT_BOOTSTRAP` to `make.bash`.
     pub path: PathBuf,
     /// If set, this temporary directory is removed after compilation (temp download).
-    cleanup: Option<TempDir>,
+    _cleanup: Option<TempDir>,
     pub label: String,
 }
 
@@ -49,7 +49,7 @@ pub fn resolve_bootstrap(
         })?;
         return Ok(Bootstrap {
             path: config.version_dir(&bv.tag()),
-            cleanup: None,
+            _cleanup: None,
             label: bv.tag(),
         });
     }
@@ -74,7 +74,7 @@ pub fn resolve_bootstrap(
     if let Ok(bv) = toolchain::resolve_installed(config, &prev_spec) {
         return Ok(Bootstrap {
             path: config.version_dir(&bv.tag()),
-            cleanup: None,
+            _cleanup: None,
             label: bv.tag(),
         });
     }
@@ -141,7 +141,7 @@ pub fn resolve_bootstrap(
     // Keep the TempDir so it cleans up when Bootstrap is dropped
     Ok(Bootstrap {
         path: bootstrap_root,
-        cleanup: Some(staging_dir),
+        _cleanup: Some(staging_dir),
         label: format!("{} (downloaded temporarily)", b_version.tag()),
     })
 }
