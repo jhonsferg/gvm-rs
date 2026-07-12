@@ -46,3 +46,41 @@ pub fn download_archive(
 pub struct ReleaseArchive {
     pub path: std::path::PathBuf,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote::release::ReleaseFile;
+    use tempfile::tempdir;
+
+    #[test]
+    fn download_archive_errors_before_any_network_call_when_no_binary_matches() {
+        // A release whose only file targets a platform that can never match
+        // `index::host_os()`/`index::host_arch()` simultaneously should fail
+        // fast in `archive_for` lookup, before any HTTP request is attempted.
+        let release = Release {
+            version: "go1.22.4".to_string(),
+            stable: true,
+            files: vec![ReleaseFile {
+                filename: "go1.22.4.plan9-amd64.tar.gz".to_string(),
+                os: "plan9".to_string(),
+                arch: "amd64".to_string(),
+                sha256: String::new(),
+                size: 0,
+                kind: "archive".to_string(),
+            }],
+        };
+
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        let client = HttpClient::new(false, 0).unwrap();
+        let version = GoVersion::parse("1.22.4").unwrap();
+
+        match download_archive(&client, &config, &release, &version) {
+            Err(e) => assert!(e.to_string().contains("No binary found")),
+            Ok(_) => panic!("expected download_archive to fail without a matching binary"),
+        }
+    }
+}
