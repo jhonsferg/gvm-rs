@@ -113,3 +113,117 @@ pub fn host_arch() -> &'static str {
         "386"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote::release::{Release, ReleaseFile};
+
+    fn release(version: &str, stable: bool) -> Release {
+        Release {
+            version: version.to_string(),
+            stable,
+            files: vec![ReleaseFile {
+                filename: format!("{version}.linux-amd64.tar.gz"),
+                os: "linux".to_string(),
+                arch: "amd64".to_string(),
+                sha256: "deadbeef".to_string(),
+                size: 123,
+                kind: "archive".to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn resolve_latest_returns_first_stable_release() {
+        let releases = vec![
+            release("go1.23.0", true),
+            release("go1.22.4", true),
+            release("go1.22.3", true),
+        ];
+        let resolved = resolve(&VersionSpec::Latest, &releases).unwrap();
+        assert_eq!(resolved.version, "go1.23.0");
+    }
+
+    #[test]
+    fn resolve_latest_skips_unstable_releases() {
+        let releases = vec![
+            release("go1.24.0rc1", false),
+            release("go1.23.0", true),
+        ];
+        let resolved = resolve(&VersionSpec::Latest, &releases).unwrap();
+        assert_eq!(resolved.version, "go1.23.0");
+    }
+
+    #[test]
+    fn resolve_latest_errors_when_no_stable_releases() {
+        let releases = vec![release("go1.24.0rc1", false)];
+        let err = resolve(&VersionSpec::Latest, &releases).unwrap_err();
+        assert!(err.to_string().contains("No stable releases"));
+    }
+
+    #[test]
+    fn resolve_partial_matches_newest_patch() {
+        let releases = vec![
+            release("go1.23.0", true),
+            release("go1.22.5", true),
+            release("go1.22.4", true),
+        ];
+        let spec = VersionSpec::Partial { major: 1, minor: 22 };
+        let resolved = resolve(&spec, &releases).unwrap();
+        assert_eq!(resolved.version, "go1.22.5");
+    }
+
+    #[test]
+    fn resolve_exact_requires_full_match() {
+        let releases = vec![release("go1.22.4", true), release("go1.22.5", true)];
+        let spec = VersionSpec::Exact {
+            major: 1,
+            minor: 22,
+            patch: 4,
+        };
+        let resolved = resolve(&spec, &releases).unwrap();
+        assert_eq!(resolved.version, "go1.22.4");
+    }
+
+    #[test]
+    fn resolve_errors_with_helpful_message_when_not_found() {
+        let releases = vec![release("go1.22.4", true)];
+        let spec = VersionSpec::Exact {
+            major: 9,
+            minor: 9,
+            patch: 9,
+        };
+        let err = resolve(&spec, &releases).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+        assert!(err.to_string().contains("list-remote"));
+    }
+
+    #[test]
+    fn resolve_ignores_unstable_release_for_partial_and_exact() {
+        let releases = vec![release("go1.22.4", false)];
+        let partial = VersionSpec::Partial { major: 1, minor: 22 };
+        assert!(resolve(&partial, &releases).is_err());
+    }
+
+    #[test]
+    fn download_url_builds_expected_link() {
+        assert_eq!(
+            download_url("go1.22.4.linux-amd64.tar.gz"),
+            "https://go.dev/dl/go1.22.4.linux-amd64.tar.gz"
+        );
+    }
+
+    #[test]
+    fn host_os_matches_a_known_platform() {
+        assert!(["windows", "darwin", "linux"].contains(&host_os()));
+    }
+
+    #[test]
+    fn host_arch_matches_a_known_architecture() {
+        assert!([
+            "amd64", "arm64", "arm", "386", "riscv64", "s390x", "ppc64le"
+        ]
+        .contains(&host_arch()));
+    }
+}
