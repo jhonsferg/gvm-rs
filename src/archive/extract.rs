@@ -79,3 +79,83 @@ fn unpack_zip(archive: &Path, dest: &Path) -> Result<()> {
         .extract(dest)
         .context("Failed to extract zip")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    fn make_tar_gz(path: &Path, entry_name: &str, contents: &[u8]) {
+        let file = std::fs::File::create(path).unwrap();
+        let gz = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut builder = tar::Builder::new(gz);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, entry_name, contents)
+            .unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    fn make_zip(path: &Path, entry_name: &str, contents: &[u8]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(entry_name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(contents).unwrap();
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn unpack_tar_gz_extracts_files() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("go.tar.gz");
+        make_tar_gz(&archive, "go/bin/hello.txt", b"hello from tar");
+
+        let dest = dir.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        unpack(&archive, &dest).unwrap();
+
+        let extracted = dest.join("go").join("bin").join("hello.txt");
+        assert_eq!(std::fs::read_to_string(extracted).unwrap(), "hello from tar");
+    }
+
+    #[test]
+    fn unpack_zip_extracts_files() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("go.zip");
+        make_zip(&archive, "go/bin/hello.txt", b"hello from zip");
+
+        let dest = dir.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        unpack(&archive, &dest).unwrap();
+
+        let extracted = dest.join("go").join("bin").join("hello.txt");
+        assert_eq!(std::fs::read_to_string(extracted).unwrap(), "hello from zip");
+    }
+
+    #[test]
+    fn unpack_rejects_unsupported_extension() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("go.rar");
+        std::fs::write(&archive, b"not a real archive").unwrap();
+
+        let dest = dir.path().join("dest");
+        let err = unpack(&archive, &dest).unwrap_err();
+        assert!(err.to_string().contains("Unsupported archive format"));
+    }
+
+    #[test]
+    fn unpack_tar_gz_errors_on_corrupt_archive() {
+        let dir = tempdir().unwrap();
+        let archive = dir.path().join("corrupt.tar.gz");
+        std::fs::write(&archive, b"not actually gzip data").unwrap();
+
+        let dest = dir.path().join("dest");
+        assert!(unpack(&archive, &dest).is_err());
+    }
+}
