@@ -877,3 +877,385 @@ pub fn dispatch(
     let registry = build_registry();
     registry.dispatch(&name, config, config_mut, client, args)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{Command as CliCommand, DownloadArgs};
+
+    fn download_args(retries: u8) -> DownloadArgs {
+        DownloadArgs { retries }
+    }
+
+    // ---- parse_install_args -------------------------------------------------
+
+    #[test]
+    fn parse_install_args_extracts_version_only() {
+        let (spec, force) = parse_install_args(&["1.22.4".to_string()]);
+        assert_eq!(spec, "1.22.4");
+        assert!(!force);
+    }
+
+    #[test]
+    fn parse_install_args_detects_force_short_and_long() {
+        let (spec, force) = parse_install_args(&["1.22.4".to_string(), "--force".to_string()]);
+        assert_eq!(spec, "1.22.4");
+        assert!(force);
+
+        let (spec, force) = parse_install_args(&["1.22.4".to_string(), "-f".to_string()]);
+        assert_eq!(spec, "1.22.4");
+        assert!(force);
+    }
+
+    #[test]
+    fn parse_install_args_skips_retries_value() {
+        let (spec, force) = parse_install_args(&[
+            "1.22.4".to_string(),
+            "--retries".to_string(),
+            "5".to_string(),
+        ]);
+        assert_eq!(spec, "1.22.4");
+        assert!(!force);
+    }
+
+    #[test]
+    fn parse_install_args_empty_args_yields_empty_spec() {
+        let (spec, force) = parse_install_args(&[]);
+        assert_eq!(spec, "");
+        assert!(!force);
+    }
+
+    #[test]
+    fn parse_install_args_last_positional_wins() {
+        // Only the last non-flag argument should be kept as the spec.
+        let (spec, _) = parse_install_args(&["1.21".to_string(), "1.22.4".to_string()]);
+        assert_eq!(spec, "1.22.4");
+    }
+
+    // ---- CommandRegistry ------------------------------------------------------
+
+    #[test]
+    fn registry_dispatch_unknown_command_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::config::Config {
+            root: dir.path().to_path_buf(),
+        };
+        let client = crate::http::HttpClient::new(false, 3).unwrap();
+        let registry = build_registry();
+
+        let err = registry
+            .dispatch("does-not-exist", &config, &config, &client, vec![])
+            .unwrap_err();
+        assert!(err.to_string().contains("Unknown command"));
+    }
+
+    #[test]
+    fn registry_contains_all_built_in_commands() {
+        let registry = build_registry();
+        for name in [
+            "install",
+            "use",
+            "default",
+            "local",
+            "uninstall",
+            "list",
+            "list-remote",
+            "current",
+            "path",
+            "env",
+            "setup",
+            "exec",
+            "doctor",
+            "completions",
+            "outdated",
+            "prune",
+            "shell",
+            "upgrade",
+            "implode",
+            "build",
+        ] {
+            assert!(
+                registry.commands.contains_key(name),
+                "missing command: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn needs_http_false_for_local_only_commands() {
+        let registry = build_registry();
+        for name in ["list", "current", "path", "env", "setup", "doctor", "completions", "prune", "implode"] {
+            let cmd = registry.commands.get(name).unwrap();
+            assert!(!cmd.needs_http(), "{name} should not need http");
+        }
+    }
+
+    #[test]
+    fn needs_http_true_by_default_for_network_commands() {
+        let registry = build_registry();
+        for name in ["install", "list-remote", "outdated", "upgrade", "build"] {
+            let cmd = registry.commands.get(name).unwrap();
+            assert!(cmd.needs_http(), "{name} should need http");
+        }
+    }
+
+    // ---- command_to_name_and_args ---------------------------------------------
+
+    #[test]
+    fn convert_build_with_all_options() {
+        let cmd = CliCommand::Build {
+            version: "1.22.4".to_string(),
+            force: true,
+            no_cgo: true,
+            bootstrap: Some("1.20".to_string()),
+            env_vars: vec!["FOO=bar".to_string()],
+            download: download_args(3),
+        };
+        let (name, args) = command_to_name_and_args(&cmd);
+        assert_eq!(name, "build");
+        assert_eq!(
+            args,
+            vec![
+                "1.22.4".to_string(),
+                "--force".to_string(),
+                "--no-cgo".to_string(),
+                "--bootstrap".to_string(),
+                "1.20".to_string(),
+                "--env".to_string(),
+                "FOO=bar".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn convert_build_minimal() {
+        let cmd = CliCommand::Build {
+            version: "1.22.4".to_string(),
+            force: false,
+            no_cgo: false,
+            bootstrap: None,
+            env_vars: vec![],
+            download: download_args(3),
+        };
+        let (name, args) = command_to_name_and_args(&cmd);
+        assert_eq!(name, "build");
+        assert_eq!(args, vec!["1.22.4".to_string()]);
+    }
+
+    #[test]
+    fn convert_build_includes_retries_when_non_default() {
+        let cmd = CliCommand::Build {
+            version: "1.22.4".to_string(),
+            force: false,
+            no_cgo: false,
+            bootstrap: None,
+            env_vars: vec![],
+            download: download_args(7),
+        };
+        let (_, args) = command_to_name_and_args(&cmd);
+        assert!(args.contains(&"--retries".to_string()));
+        assert!(args.contains(&"7".to_string()));
+    }
+
+    #[test]
+    fn convert_install_with_force() {
+        let cmd = CliCommand::Install {
+            version: "1.22.4".to_string(),
+            force: true,
+            download: download_args(3),
+        };
+        let (name, args) = command_to_name_and_args(&cmd);
+        assert_eq!(name, "install");
+        assert_eq!(args, vec!["1.22.4".to_string(), "--force".to_string()]);
+    }
+
+    #[test]
+    fn convert_use_default_local_uninstall() {
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Use {
+                version: "1.22.4".to_string()
+            }),
+            ("use".to_string(), vec!["1.22.4".to_string()])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Default {
+                version: "1.22.4".to_string()
+            }),
+            ("default".to_string(), vec!["1.22.4".to_string()])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Local {
+                version: "1.22.4".to_string()
+            }),
+            ("local".to_string(), vec!["1.22.4".to_string()])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Uninstall {
+                version: "1.22.4".to_string()
+            }),
+            ("uninstall".to_string(), vec!["1.22.4".to_string()])
+        );
+    }
+
+    #[test]
+    fn convert_list_and_list_remote() {
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::List),
+            ("list".to_string(), vec![])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::ListRemote { all: true }),
+            ("list-remote".to_string(), vec!["--all".to_string()])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::ListRemote { all: false }),
+            ("list-remote".to_string(), vec![])
+        );
+    }
+
+    #[test]
+    fn convert_current_path_env() {
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Current),
+            ("current".to_string(), vec![])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Path {
+                version: Some("1.22.4".to_string())
+            }),
+            ("path".to_string(), vec!["1.22.4".to_string()])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Path { version: None }),
+            ("path".to_string(), vec![])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Env {
+                shell: Some("bash".to_string())
+            }),
+            ("env".to_string(), vec!["bash".to_string()])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Env { shell: None }),
+            ("env".to_string(), vec![])
+        );
+    }
+
+    #[test]
+    fn convert_setup_with_shell_and_reset() {
+        let cmd = CliCommand::Setup {
+            shell: Some("zsh".to_string()),
+            reset: true,
+        };
+        let (name, args) = command_to_name_and_args(&cmd);
+        assert_eq!(name, "setup");
+        assert_eq!(
+            args,
+            vec!["--shell".to_string(), "zsh".to_string(), "--reset".to_string()]
+        );
+    }
+
+    #[test]
+    fn convert_exec_appends_trailing_args() {
+        let cmd = CliCommand::Exec {
+            version: "1.22.4".to_string(),
+            args: vec!["build".to_string(), "./...".to_string()],
+        };
+        let (name, args) = command_to_name_and_args(&cmd);
+        assert_eq!(name, "exec");
+        assert_eq!(
+            args,
+            vec!["1.22.4".to_string(), "build".to_string(), "./...".to_string()]
+        );
+    }
+
+    #[test]
+    fn convert_doctor_completions_upgrade_implode() {
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Doctor {
+                shell: Some("fish".to_string())
+            }),
+            (
+                "doctor".to_string(),
+                vec!["--shell".to_string(), "fish".to_string()]
+            )
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Doctor { shell: None }),
+            ("doctor".to_string(), vec![])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Completions {
+                shell: "bash".to_string()
+            }),
+            ("completions".to_string(), vec!["bash".to_string()])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Upgrade {
+                force: true,
+                download: download_args(3)
+            }),
+            ("upgrade".to_string(), vec!["--force".to_string()])
+        );
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Implode { force: false }),
+            ("implode".to_string(), vec![])
+        );
+    }
+
+    #[test]
+    fn convert_outdated_and_prune() {
+        assert_eq!(
+            command_to_name_and_args(&CliCommand::Outdated),
+            ("outdated".to_string(), vec![])
+        );
+        let cmd = CliCommand::Prune {
+            force: true,
+            dry_run: true,
+            scan_dir: Some("/tmp/scan".to_string()),
+        };
+        let (name, args) = command_to_name_and_args(&cmd);
+        assert_eq!(name, "prune");
+        assert_eq!(
+            args,
+            vec![
+                "--force".to_string(),
+                "--dry-run".to_string(),
+                "--scan-dir".to_string(),
+                "/tmp/scan".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn convert_shell_all_fields() {
+        let cmd = CliCommand::Shell {
+            version: Some("1.22.4".to_string()),
+            unset: true,
+            shell: Some("powershell".to_string()),
+        };
+        let (name, args) = command_to_name_and_args(&cmd);
+        assert_eq!(name, "shell");
+        assert_eq!(
+            args,
+            vec![
+                "1.22.4".to_string(),
+                "--unset".to_string(),
+                "--shell".to_string(),
+                "powershell".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn convert_shell_no_optional_fields() {
+        let cmd = CliCommand::Shell {
+            version: None,
+            unset: false,
+            shell: None,
+        };
+        let (name, args) = command_to_name_and_args(&cmd);
+        assert_eq!(name, "shell");
+        assert!(args.is_empty());
+    }
+}
