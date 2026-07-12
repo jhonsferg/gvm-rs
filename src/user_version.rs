@@ -104,3 +104,95 @@ impl fmt::Display for VersionSpec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_latest_case_insensitive() {
+        assert_eq!(VersionSpec::parse("latest").unwrap(), VersionSpec::Latest);
+        assert_eq!(VersionSpec::parse("LATEST").unwrap(), VersionSpec::Latest);
+        assert_eq!(VersionSpec::parse(" Latest ").unwrap(), VersionSpec::Latest);
+    }
+
+    #[test]
+    fn parse_partial_with_and_without_go_prefix() {
+        let expected = VersionSpec::Partial {
+            major: 1,
+            minor: 22,
+        };
+        assert_eq!(VersionSpec::parse("1.22").unwrap(), expected);
+        assert_eq!(VersionSpec::parse("go1.22").unwrap(), expected);
+    }
+
+    #[test]
+    fn parse_exact_with_and_without_go_prefix() {
+        let expected = VersionSpec::Exact {
+            major: 1,
+            minor: 22,
+            patch: 4,
+        };
+        assert_eq!(VersionSpec::parse("1.22.4").unwrap(), expected);
+        assert_eq!(VersionSpec::parse("go1.22.4").unwrap(), expected);
+    }
+
+    #[test]
+    fn parse_rejects_malformed_input() {
+        assert!(VersionSpec::parse("not-a-version").is_err());
+        assert!(VersionSpec::parse("1").is_err());
+        assert!(VersionSpec::parse("1.2.3.4").is_err());
+        assert!(VersionSpec::parse("1.x").is_err());
+    }
+
+    #[test]
+    fn matches_latest_matches_anything() {
+        let v = GoVersion::parse("1.22.4").unwrap();
+        assert!(VersionSpec::Latest.matches(&v));
+    }
+
+    #[test]
+    fn matches_partial_ignores_patch() {
+        let spec = VersionSpec::Partial {
+            major: 1,
+            minor: 22,
+        };
+        assert!(spec.matches(&GoVersion::parse("1.22.4").unwrap()));
+        assert!(spec.matches(&GoVersion::parse("1.22.0").unwrap()));
+        assert!(!spec.matches(&GoVersion::parse("1.21.4").unwrap()));
+        assert!(!spec.matches(&GoVersion::parse("2.22.4").unwrap()));
+    }
+
+    #[test]
+    fn matches_exact_requires_full_equality() {
+        let spec = VersionSpec::Exact {
+            major: 1,
+            minor: 22,
+            patch: 4,
+        };
+        assert!(spec.matches(&GoVersion::parse("1.22.4").unwrap()));
+        assert!(!spec.matches(&GoVersion::parse("1.22.5").unwrap()));
+    }
+
+    #[test]
+    fn display_formats_match_user_input_style() {
+        assert_eq!(VersionSpec::Latest.to_string(), "latest");
+        assert_eq!(
+            VersionSpec::Partial {
+                major: 1,
+                minor: 22
+            }
+            .to_string(),
+            "1.22"
+        );
+        assert_eq!(
+            VersionSpec::Exact {
+                major: 1,
+                minor: 22,
+                patch: 4
+            }
+            .to_string(),
+            "1.22.4"
+        );
+    }
+}
