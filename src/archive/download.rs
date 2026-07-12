@@ -252,3 +252,68 @@ fn progress_bar(content_length: u64, existing: u64) -> ProgressBar {
 fn backoff(n: u8) -> u64 {
     2u64.pow(n as u32 - 1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn part_path_appends_suffix() {
+        let dest = Path::new("/tmp/go1.22.4.linux-amd64.tar.gz");
+        assert_eq!(
+            part_path(dest),
+            PathBuf::from("/tmp/go1.22.4.linux-amd64.tar.gz.part")
+        );
+    }
+
+    #[test]
+    fn backoff_doubles_each_attempt() {
+        assert_eq!(backoff(1), 1);
+        assert_eq!(backoff(2), 2);
+        assert_eq!(backoff(3), 4);
+        assert_eq!(backoff(4), 8);
+    }
+
+    #[test]
+    fn verify_sha256_accepts_matching_digest() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("data.bin");
+        std::fs::write(&file, b"hello world").unwrap();
+
+        // sha256("hello world")
+        let expected = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+        verify_sha256(&file, expected).unwrap();
+    }
+
+    #[test]
+    fn verify_sha256_rejects_mismatched_digest() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("data.bin");
+        std::fs::write(&file, b"hello world").unwrap();
+
+        let err = verify_sha256(
+            &file,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Checksum mismatch"));
+    }
+
+    #[test]
+    fn verify_sha256_skips_check_when_expected_is_empty() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("data.bin");
+        std::fs::write(&file, b"anything").unwrap();
+
+        verify_sha256(&file, "").unwrap();
+    }
+
+    #[test]
+    fn verify_sha256_errors_when_file_missing() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("missing.bin");
+        let err = verify_sha256(&file, "deadbeef").unwrap_err();
+        assert!(err.to_string().contains("Cannot open"));
+    }
+}
