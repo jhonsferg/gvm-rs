@@ -984,7 +984,17 @@ mod tests {
     #[test]
     fn needs_http_false_for_local_only_commands() {
         let registry = build_registry();
-        for name in ["list", "current", "path", "env", "setup", "doctor", "completions", "prune", "implode"] {
+        for name in [
+            "list",
+            "current",
+            "path",
+            "env",
+            "setup",
+            "doctor",
+            "completions",
+            "prune",
+            "implode",
+        ] {
             let cmd = registry.commands.get(name).unwrap();
             assert!(!cmd.needs_http(), "{name} should not need http");
         }
@@ -1151,7 +1161,11 @@ mod tests {
         assert_eq!(name, "setup");
         assert_eq!(
             args,
-            vec!["--shell".to_string(), "zsh".to_string(), "--reset".to_string()]
+            vec![
+                "--shell".to_string(),
+                "zsh".to_string(),
+                "--reset".to_string()
+            ]
         );
     }
 
@@ -1165,7 +1179,11 @@ mod tests {
         assert_eq!(name, "exec");
         assert_eq!(
             args,
-            vec!["1.22.4".to_string(), "build".to_string(), "./...".to_string()]
+            vec![
+                "1.22.4".to_string(),
+                "build".to_string(),
+                "./...".to_string()
+            ]
         );
     }
 
