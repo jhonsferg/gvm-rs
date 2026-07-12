@@ -125,3 +125,90 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn move_dir_relocates_contents_via_rename() {
+        let root = tempdir().unwrap();
+        let src = root.path().join("src");
+        let dst = root.path().join("dst");
+        std::fs::create_dir_all(src.join("nested")).unwrap();
+        std::fs::write(src.join("file.txt"), b"hello").unwrap();
+        std::fs::write(src.join("nested").join("inner.txt"), b"world").unwrap();
+
+        move_dir(&src, &dst).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "hello");
+        assert_eq!(
+            std::fs::read_to_string(dst.join("nested").join("inner.txt")).unwrap(),
+            "world"
+        );
+    }
+
+    #[test]
+    fn move_dir_errors_when_source_missing() {
+        let root = tempdir().unwrap();
+        let src = root.path().join("does-not-exist");
+        let dst = root.path().join("dst");
+        assert!(move_dir(&src, &dst).is_err());
+    }
+
+    #[test]
+    fn copy_dir_all_recreates_full_tree() {
+        let root = tempdir().unwrap();
+        let src = root.path().join("src");
+        let dst = root.path().join("dst");
+        std::fs::create_dir_all(src.join("a").join("b")).unwrap();
+        std::fs::write(src.join("top.txt"), b"top").unwrap();
+        std::fs::write(src.join("a").join("b").join("deep.txt"), b"deep").unwrap();
+
+        copy_dir_all(&src, &dst).unwrap();
+
+        // Original tree must remain untouched.
+        assert!(src.exists());
+        assert_eq!(std::fs::read_to_string(dst.join("top.txt")).unwrap(), "top");
+        assert_eq!(
+            std::fs::read_to_string(dst.join("a").join("b").join("deep.txt")).unwrap(),
+            "deep"
+        );
+    }
+
+    #[test]
+    fn set_version_link_creates_and_replaces() {
+        let root = tempdir().unwrap();
+        let target_a = root.path().join("version-a");
+        let target_b = root.path().join("version-b");
+        std::fs::create_dir_all(&target_a).unwrap();
+        std::fs::create_dir_all(&target_b).unwrap();
+        std::fs::write(target_a.join("marker.txt"), b"a").unwrap();
+        std::fs::write(target_b.join("marker.txt"), b"b").unwrap();
+
+        let link = root.path().join("current");
+
+        set_version_link(&link, &target_a).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(link.join("marker.txt")).unwrap(),
+            "a"
+        );
+
+        // Re-pointing the link should atomically replace it, not fail because
+        // it already exists.
+        set_version_link(&link, &target_b).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(link.join("marker.txt")).unwrap(),
+            "b"
+        );
+    }
+
+    #[test]
+    fn remove_link_if_exists_is_noop_when_absent() {
+        let root = tempdir().unwrap();
+        let link = root.path().join("nonexistent-link");
+        assert!(remove_link_if_exists(&link).is_ok());
+    }
+}
