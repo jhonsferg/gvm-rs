@@ -181,4 +181,58 @@ mod tests {
         assert!(!Fish.shell_unset_script().is_empty());
         assert!(!PowerShell.shell_unset_script().is_empty());
     }
+
+    // ── run() validation and success paths ──────────────────────────────────
+
+    use super::run;
+    use crate::config::Config;
+    use tempfile::tempdir;
+
+    fn make_config() -> (tempfile::TempDir, Config) {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        (dir, config)
+    }
+
+    #[test]
+    fn run_errors_when_version_and_unset_both_given() {
+        let (_dir, config) = make_config();
+        let err = run(&config, Some("1.22.4"), true, Some("bash")).unwrap_err();
+        assert!(err.to_string().contains("Cannot specify a version"));
+    }
+
+    #[test]
+    fn run_errors_when_neither_version_nor_unset_given() {
+        let (_dir, config) = make_config();
+        let err = run(&config, None, false, Some("bash")).unwrap_err();
+        assert!(err.to_string().contains("Specify a version"));
+    }
+
+    #[test]
+    fn run_errors_on_unknown_shell() {
+        let (_dir, config) = make_config();
+        assert!(run(&config, None, true, Some("not-a-shell")).is_err());
+    }
+
+    #[test]
+    fn run_unset_succeeds_with_explicit_shell() {
+        let (_dir, config) = make_config();
+        run(&config, None, true, Some("bash")).unwrap();
+    }
+
+    #[test]
+    fn run_errors_when_requested_version_not_installed() {
+        let (_dir, config) = make_config();
+        assert!(run(&config, Some("1.22.4"), false, Some("bash")).is_err());
+    }
+
+    #[test]
+    fn run_succeeds_for_installed_version() {
+        let (_dir, config) = make_config();
+        let tag = "go1.22.4";
+        std::fs::create_dir_all(config.version_bin_dir(tag)).unwrap();
+        run(&config, Some("1.22.4"), false, Some("bash")).unwrap();
+    }
 }
