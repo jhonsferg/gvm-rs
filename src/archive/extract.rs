@@ -121,7 +121,10 @@ mod tests {
         unpack(&archive, &dest).unwrap();
 
         let extracted = dest.join("go").join("bin").join("hello.txt");
-        assert_eq!(std::fs::read_to_string(extracted).unwrap(), "hello from tar");
+        assert_eq!(
+            std::fs::read_to_string(extracted).unwrap(),
+            "hello from tar"
+        );
     }
 
     #[test]
@@ -135,7 +138,10 @@ mod tests {
         unpack(&archive, &dest).unwrap();
 
         let extracted = dest.join("go").join("bin").join("hello.txt");
-        assert_eq!(std::fs::read_to_string(extracted).unwrap(), "hello from zip");
+        assert_eq!(
+            std::fs::read_to_string(extracted).unwrap(),
+            "hello from zip"
+        );
     }
 
     #[test]
