@@ -105,11 +105,26 @@ pub fn run(config: &Config, client: &HttpClient) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::version::GoVersion;
+    use tempfile::tempdir;
 
     // Helper: parse a GoVersion, panicking if the string is invalid (test only).
     fn v(s: &str) -> GoVersion {
         GoVersion::parse(s).unwrap()
+    }
+
+    #[test]
+    fn run_short_circuits_before_any_network_call_when_nothing_installed() {
+        // With no installed versions, `run` must return early (printing a
+        // hint) without ever calling `index::fetch_releases`, so this must
+        // succeed even though no network is available in the test sandbox.
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        let client = HttpClient::new(false, 0).unwrap();
+        run(&config, &client).unwrap();
     }
 
     #[test]
