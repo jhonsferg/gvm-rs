@@ -52,3 +52,48 @@ pub fn run(config: &Config, spec_str: &str) -> Result<()> {
     println!("  (current session without wrapper: {hint})");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn install_version(config: &Config, tag: &str) {
+        std::fs::create_dir_all(config.version_dir(tag)).unwrap();
+    }
+
+    #[test]
+    fn run_sets_global_version_and_current_link() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        install_version(&config, "go1.22.4");
+
+        run(&config, "1.22.4").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(config.version_file()).unwrap(),
+            "go1.22.4"
+        );
+        assert!(config.current_dir().exists());
+    }
+
+    #[test]
+    fn run_errors_when_version_not_installed() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        assert!(run(&config, "1.22.4").is_err());
+    }
+
+    #[test]
+    fn run_errors_on_invalid_spec() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        assert!(run(&config, "garbage").is_err());
+    }
+}
