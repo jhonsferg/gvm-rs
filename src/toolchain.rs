@@ -201,3 +201,159 @@ pub fn resolve_installed(config: &Config, spec: &VersionSpec) -> Result<GoVersio
             }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn make_config() -> (tempfile::TempDir, Config) {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        (dir, config)
+    }
+
+    fn install(config: &Config, tag: &str) {
+        std::fs::create_dir_all(config.version_dir(tag)).unwrap();
+    }
+
+    #[test]
+    fn list_installed_returns_empty_when_dir_missing() {
+        let (_dir, config) = make_config();
+        assert_eq!(list_installed(&config).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn list_installed_sorts_newest_first_and_skips_garbage() {
+        let (_dir, config) = make_config();
+        install(&config, "go1.21.0");
+        install(&config, "go1.22.4");
+        install(&config, "go1.22.3");
+        // A non-version directory entry should be silently skipped.
+        std::fs::create_dir_all(config.versions_dir().join("not-a-version")).unwrap();
+
+        let versions = list_installed(&config).unwrap();
+        let tags: Vec<String> = versions.iter().map(GoVersion::tag).collect();
+        assert_eq!(tags, vec!["go1.22.4", "go1.22.3", "go1.21"]);
+    }
+
+    #[test]
+    fn is_installed_true_and_false() {
+        let (_dir, config) = make_config();
+        install(&config, "go1.22.4");
+        let v = GoVersion::parse("1.22.4").unwrap();
+        assert!(is_installed(&config, &v));
+
+        let missing = GoVersion::parse("1.19.0").unwrap();
+        assert!(!is_installed(&config, &missing));
+    }
+
+    #[test]
+    fn global_version_errors_when_unset() {
+        let (_dir, config) = make_config();
+        assert!(global_version(&config).is_err());
+    }
+
+    #[test]
+    fn global_version_reads_written_tag() {
+        let (_dir, config) = make_config();
+        std::fs::write(config.version_file(), "go1.22.4").unwrap();
+        let v = global_version(&config).unwrap();
+        assert_eq!(v.tag(), "go1.22.4");
+    }
+
+    #[test]
+    fn global_version_errors_on_corrupted_file() {
+        let (_dir, config) = make_config();
+        std::fs::write(config.version_file(), "not-a-version").unwrap();
+        assert!(global_version(&config).is_err());
+    }
+
+    #[test]
+    fn version_bin_path_errors_when_not_installed() {
+        let (_dir, config) = make_config();
+        let v = GoVersion::parse("1.22.4").unwrap();
+        assert!(version_bin_path(&config, &v).is_err());
+    }
+
+    #[test]
+    fn version_bin_path_succeeds_when_installed() {
+        let (_dir, config) = make_config();
+        let tag = "go1.22.4";
+        std::fs::create_dir_all(config.version_bin_dir(tag)).unwrap();
+        let v = GoVersion::parse("1.22.4").unwrap();
+        let bin = version_bin_path(&config, &v).unwrap();
+        assert_eq!(bin, config.version_bin_dir(tag));
+    }
+
+    #[test]
+    fn set_global_version_writes_tag_to_file() {
+        let (_dir, config) = make_config();
+        let v = GoVersion::parse("1.22.4").unwrap();
+        set_global_version(&config, &v).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(config.version_file()).unwrap(),
+            "go1.22.4"
+        );
+    }
+
+    #[test]
+    fn update_current_link_points_to_version_dir() {
+        let (_dir, config) = make_config();
+        let tag = "go1.22.4";
+        install(&config, tag);
+        std::fs::write(config.version_dir(tag).join("marker.txt"), b"x").unwrap();
+        let v = GoVersion::parse("1.22.4").unwrap();
+
+        update_current_link(&config, &v).unwrap();
+
+        assert!(config.current_dir().join("marker.txt").exists());
+    }
+
+    #[test]
+    fn resolve_installed_latest_picks_newest() {
+        let (_dir, config) = make_config();
+        install(&config, "go1.21.0");
+        install(&config, "go1.22.4");
+        let resolved = resolve_installed(&config, &VersionSpec::Latest).unwrap();
+        assert_eq!(resolved.tag(), "go1.22.4");
+    }
+
+    #[test]
+    fn resolve_installed_latest_errors_when_none_installed() {
+        let (_dir, config) = make_config();
+        assert!(resolve_installed(&config, &VersionSpec::Latest).is_err());
+    }
+
+    #[test]
+    fn resolve_installed_partial_matches_installed_patch() {
+        let (_dir, config) = make_config();
+        install(&config, "go1.22.4");
+        let spec = VersionSpec::Partial {
+            major: 1,
+            minor: 22,
+        };
+        let resolved = resolve_installed(&config, &spec).unwrap();
+        assert_eq!(resolved.tag(), "go1.22.4");
+    }
+
+    #[test]
+    fn resolve_installed_exact_errors_when_not_found() {
+        let (_dir, config) = make_config();
+        install(&config, "go1.22.4");
+        let spec = VersionSpec::Exact {
+            major: 1,
+            minor: 19,
+            patch: 0,
+        };
+        assert!(resolve_installed(&config, &spec).is_err());
+    }
+
+    #[test]
+    fn version_source_label_text() {
+        assert_eq!(VersionSource::Local.label(), "local (.go-version)");
+        assert_eq!(VersionSource::Global.label(), "global");
+    }
+}
