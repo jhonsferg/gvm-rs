@@ -25,16 +25,7 @@ use crate::{config::Config, toolchain, user_version::VersionSpec};
 /// `.go-version` file cannot be written.
 pub fn run(config: &Config, spec_str: &str) -> Result<()> {
     let spec = VersionSpec::parse(spec_str)?;
-
-    let tag = match &spec {
-        VersionSpec::Latest => "latest".to_string(),
-        VersionSpec::Partial { major, minor } => format!("go{major}.{minor}"),
-        VersionSpec::Exact {
-            major,
-            minor,
-            patch,
-        } => format!("go{major}.{minor}.{patch}"),
-    };
+    let tag = spec_to_tag(&spec);
 
     // Warn if the version is not installed, but still write the file.
     if !matches!(spec, VersionSpec::Latest) {
@@ -58,4 +49,49 @@ pub fn run(config: &Config, spec_str: &str) -> Result<()> {
         tag.bold()
     );
     Ok(())
+}
+
+/// Formats a [`VersionSpec`] as the literal string written to `.go-version`.
+///
+/// `Latest` is written as the literal `"latest"` (not resolved to a concrete
+/// version) so the pin tracks the current stable release over time.
+fn spec_to_tag(spec: &VersionSpec) -> String {
+    match spec {
+        VersionSpec::Latest => "latest".to_string(),
+        VersionSpec::Partial { major, minor } => format!("go{major}.{minor}"),
+        VersionSpec::Exact {
+            major,
+            minor,
+            patch,
+        } => format!("go{major}.{minor}.{patch}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spec_to_tag_latest_is_literal() {
+        assert_eq!(spec_to_tag(&VersionSpec::Latest), "latest");
+    }
+
+    #[test]
+    fn spec_to_tag_partial_omits_patch() {
+        let spec = VersionSpec::Partial {
+            major: 1,
+            minor: 22,
+        };
+        assert_eq!(spec_to_tag(&spec), "go1.22");
+    }
+
+    #[test]
+    fn spec_to_tag_exact_includes_patch() {
+        let spec = VersionSpec::Exact {
+            major: 1,
+            minor: 22,
+            patch: 4,
+        };
+        assert_eq!(spec_to_tag(&spec), "go1.22.4");
+    }
 }

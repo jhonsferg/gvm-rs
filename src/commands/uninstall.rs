@@ -44,3 +44,47 @@ pub fn run(config: &Config, spec_str: &str) -> Result<()> {
     println!("{} Go {} uninstalled.", "✓".green(), version.tag().bold());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn install_version(config: &Config, tag: &str) {
+        std::fs::create_dir_all(config.version_dir(tag)).unwrap();
+    }
+
+    #[test]
+    fn run_removes_installed_version_directory() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        // Use a tag distinct from any ambient locally-active version so this
+        // test is not coupled to the real process working directory's
+        // `.go-version` resolution.
+        install_version(&config, "go1.19.9");
+
+        run(&config, "1.19.9").unwrap();
+
+        assert!(!config.version_dir("go1.19.9").exists());
+    }
+
+    #[test]
+    fn run_errors_when_version_not_installed() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        assert!(run(&config, "1.19.9").is_err());
+    }
+
+    #[test]
+    fn run_errors_on_invalid_spec() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        assert!(run(&config, "not-a-version").is_err());
+    }
+}

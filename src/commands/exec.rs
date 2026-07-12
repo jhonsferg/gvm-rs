@@ -60,3 +60,42 @@ pub fn run(config: &Config, spec_str: &str, args: &[String]) -> Result<()> {
 
     std::process::exit(status.code().unwrap_or(1));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn make_config() -> (tempfile::TempDir, Config) {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        (dir, config)
+    }
+
+    // NB: only the early-return error paths are exercised here. The success
+    // path ends the process via `std::process::exit`, which would terminate
+    // the test runner, so it cannot be unit tested directly.
+
+    #[test]
+    fn run_errors_when_no_command_given() {
+        let (_dir, config) = make_config();
+        let err = run(&config, "1.22.4", &[]).unwrap_err();
+        assert!(err.to_string().contains("No command specified"));
+    }
+
+    #[test]
+    fn run_errors_on_invalid_spec() {
+        let (_dir, config) = make_config();
+        let args = vec!["echo".to_string(), "hi".to_string()];
+        assert!(run(&config, "not-a-version", &args).is_err());
+    }
+
+    #[test]
+    fn run_errors_when_version_not_installed() {
+        let (_dir, config) = make_config();
+        let args = vec!["echo".to_string(), "hi".to_string()];
+        assert!(run(&config, "1.22.4", &args).is_err());
+    }
+}
