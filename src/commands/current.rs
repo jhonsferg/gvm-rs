@@ -31,3 +31,24 @@ pub fn run(config: &Config) -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn run_succeeds_when_global_version_is_set() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        std::fs::write(config.version_file(), "go1.22.4").unwrap();
+
+        // `active_version` prefers a local `.go-version` found by walking up
+        // from the real process cwd, so we can't assert on *which* version
+        // wins here - only that a global default being present doesn't
+        // cause `run` to error.
+        run(&config).unwrap();
+    }
+}
