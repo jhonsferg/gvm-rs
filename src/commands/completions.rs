@@ -48,3 +48,29 @@ pub fn run(shell_str: &str) -> Result<()> {
     generate(shell, &mut cmd, "gvm", &mut std::io::stdout());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_accepts_all_supported_shells() {
+        for shell in [
+            "bash",
+            "zsh",
+            "fish",
+            "powershell",
+            "pwsh",
+            "PowerShell",
+            "Bash",
+        ] {
+            run(shell).unwrap();
+        }
+    }
+
+    #[test]
+    fn run_errors_on_unsupported_shell() {
+        let err = run("not-a-shell").unwrap_err();
+        assert!(err.to_string().contains("Unknown shell"));
+    }
+}
