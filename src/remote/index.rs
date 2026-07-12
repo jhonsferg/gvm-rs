@@ -147,10 +147,7 @@ mod tests {
 
     #[test]
     fn resolve_latest_skips_unstable_releases() {
-        let releases = vec![
-            release("go1.24.0rc1", false),
-            release("go1.23.0", true),
-        ];
+        let releases = vec![release("go1.24.0rc1", false), release("go1.23.0", true)];
         let resolved = resolve(&VersionSpec::Latest, &releases).unwrap();
         assert_eq!(resolved.version, "go1.23.0");
     }
@@ -169,7 +166,10 @@ mod tests {
             release("go1.22.5", true),
             release("go1.22.4", true),
         ];
-        let spec = VersionSpec::Partial { major: 1, minor: 22 };
+        let spec = VersionSpec::Partial {
+            major: 1,
+            minor: 22,
+        };
         let resolved = resolve(&spec, &releases).unwrap();
         assert_eq!(resolved.version, "go1.22.5");
     }
@@ -202,7 +202,10 @@ mod tests {
     #[test]
     fn resolve_ignores_unstable_release_for_partial_and_exact() {
         let releases = vec![release("go1.22.4", false)];
-        let partial = VersionSpec::Partial { major: 1, minor: 22 };
+        let partial = VersionSpec::Partial {
+            major: 1,
+            minor: 22,
+        };
         assert!(resolve(&partial, &releases).is_err());
     }
 
@@ -221,9 +224,8 @@ mod tests {
 
     #[test]
     fn host_arch_matches_a_known_architecture() {
-        assert!([
-            "amd64", "arm64", "arm", "386", "riscv64", "s390x", "ppc64le"
-        ]
-        .contains(&host_arch()));
+        assert!(
+            ["amd64", "arm64", "arm", "386", "riscv64", "s390x", "ppc64le"].contains(&host_arch())
+        );
     }
 }
