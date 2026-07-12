@@ -143,7 +143,10 @@ mod tests {
         move_dir(&src, &dst).unwrap();
 
         assert!(!src.exists());
-        assert_eq!(std::fs::read_to_string(dst.join("file.txt")).unwrap(), "hello");
+        assert_eq!(
+            std::fs::read_to_string(dst.join("file.txt")).unwrap(),
+            "hello"
+        );
         assert_eq!(
             std::fs::read_to_string(dst.join("nested").join("inner.txt")).unwrap(),
             "world"
