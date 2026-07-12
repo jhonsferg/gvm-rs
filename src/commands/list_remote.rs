@@ -8,7 +8,12 @@
 use anyhow::Result;
 use colored::Colorize;
 
-use crate::{config::Config, http::HttpClient, remote::index, toolchain};
+use crate::{
+    config::Config,
+    http::HttpClient,
+    remote::{index, release::Release},
+    toolchain,
+};
 
 /// Fetches the go.dev release index and prints available stable versions.
 ///
@@ -28,21 +33,7 @@ pub fn run(config: &Config, client: &HttpClient, all: bool) -> Result<()> {
     let releases = index::fetch_releases(client)?;
     let installed = toolchain::list_installed(config)?;
 
-    let stable: Vec<_> = releases.iter().filter(|r| r.stable).collect();
-
-    let to_show: Vec<_> = if all {
-        stable
-    } else {
-        // Deduplicate: keep only the first (newest) release per major.minor pair.
-        let mut seen = std::collections::HashSet::new();
-        stable
-            .into_iter()
-            .filter(|r| {
-                r.go_version()
-                    .is_some_and(|v| seen.insert((v.major, v.minor)))
-            })
-            .collect()
-    };
+    let to_show = releases_to_show(&releases, all);
 
     println!(
         "Available Go versions{}:",
@@ -70,4 +61,86 @@ pub fn run(config: &Config, client: &HttpClient, all: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Filters the release list down to what should be printed.
+///
+/// When `all` is `true`, every stable release is kept. Otherwise the list is
+/// deduplicated to only the newest (first, since go.dev returns newest-first)
+/// release per `major.minor` pair.
+fn releases_to_show(releases: &[Release], all: bool) -> Vec<&Release> {
+    let stable: Vec<_> = releases.iter().filter(|r| r.stable).collect();
+
+    if all {
+        return stable;
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    stable
+        .into_iter()
+        .filter(|r| {
+            r.go_version()
+                .is_some_and(|v| seen.insert((v.major, v.minor)))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote::release::ReleaseFile;
+
+    fn release(version: &str, stable: bool) -> Release {
+        Release {
+            version: version.to_string(),
+            stable,
+            files: vec![ReleaseFile {
+                filename: format!("{version}.linux-amd64.tar.gz"),
+                os: "linux".to_string(),
+                arch: "amd64".to_string(),
+                sha256: String::new(),
+                size: 0,
+                kind: "archive".to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn releases_to_show_all_keeps_every_stable_release() {
+        let releases = vec![
+            release("go1.22.4", true),
+            release("go1.22.3", true),
+            release("go1.21.0", true),
+            release("go1.23.0rc1", false),
+        ];
+        let shown = releases_to_show(&releases, true);
+        assert_eq!(shown.len(), 3);
+    }
+
+    #[test]
+    fn releases_to_show_compact_keeps_newest_patch_per_minor() {
+        let releases = vec![
+            release("go1.22.4", true),
+            release("go1.22.3", true),
+            release("go1.21.5", true),
+            release("go1.21.4", true),
+        ];
+        let shown = releases_to_show(&releases, false);
+        let versions: Vec<&str> = shown.iter().map(|r| r.version.as_str()).collect();
+        assert_eq!(versions, vec!["go1.22.4", "go1.21.5"]);
+    }
+
+    #[test]
+    fn releases_to_show_excludes_unstable_releases() {
+        let releases = vec![release("go1.23.0rc1", false), release("go1.22.4", true)];
+        let shown = releases_to_show(&releases, false);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].version, "go1.22.4");
+    }
+
+    #[test]
+    fn releases_to_show_empty_input_yields_empty_output() {
+        assert!(releases_to_show(&[], false).is_empty());
+        assert!(releases_to_show(&[], true).is_empty());
+    }
 }
