@@ -62,3 +62,46 @@ pub fn run(config: &Config, shell_str: Option<&str>) -> Result<()> {
     print!("{}", shell.env_script(&ctx));
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn run_succeeds_with_explicit_shell_and_no_active_version() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        // No version file and no .go-version anywhere: active_version() fails,
+        // but run() must still succeed and just print the base env script.
+        run(&config, Some("bash")).unwrap();
+    }
+
+    #[test]
+    fn run_errors_on_unknown_shell() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        assert!(run(&config, Some("not-a-real-shell")).is_err());
+    }
+
+    #[test]
+    fn run_uses_global_version_when_installed() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        let tag = "go1.22.4";
+        std::fs::create_dir_all(config.version_bin_dir(tag)).unwrap();
+        let go_name = if cfg!(windows) { "go.exe" } else { "go" };
+        std::fs::write(config.version_bin_dir(tag).join(go_name), b"").unwrap();
+        std::fs::write(config.version_file(), tag).unwrap();
+
+        // Should resolve the global version and print a script containing
+        // the GOROOT for that version without erroring.
+        run(&config, Some("bash")).unwrap();
+    }
+}

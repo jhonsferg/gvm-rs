@@ -180,3 +180,71 @@ fn remove_binary(exe: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn count_versions_returns_zero_when_dir_missing() {
+        let dir = tempdir().unwrap();
+        let versions = dir.path().join("versions");
+        assert_eq!(count_versions(&versions), 0);
+    }
+
+    #[test]
+    fn count_versions_counts_entries() {
+        let dir = tempdir().unwrap();
+        let versions = dir.path().join("versions");
+        std::fs::create_dir_all(versions.join("go1.22.4")).unwrap();
+        std::fs::create_dir_all(versions.join("go1.21.0")).unwrap();
+        assert_eq!(count_versions(&versions), 2);
+    }
+
+    #[test]
+    fn dir_size_mb_returns_zero_when_root_missing() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("nope");
+        assert_eq!(dir_size_mb(&root), 0.0);
+    }
+
+    #[test]
+    fn dir_size_mb_sums_nested_file_sizes() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join("a.bin"), vec![0u8; 1024 * 1024]).unwrap(); // 1 MiB
+        std::fs::write(root.join("nested").join("b.bin"), vec![0u8; 512 * 1024]).unwrap(); // 0.5 MiB
+
+        let size = dir_size_mb(&root);
+        assert!((size - 1.5).abs() < 0.01, "expected ~1.5 MB, got {size}");
+    }
+
+    #[test]
+    fn remove_binary_removes_the_file() {
+        let dir = tempdir().unwrap();
+        let exe = dir.path().join("gvm-fake-binary");
+        std::fs::write(&exe, b"not a real binary").unwrap();
+
+        remove_binary(&exe).unwrap();
+
+        #[cfg(not(windows))]
+        assert!(!exe.exists());
+
+        #[cfg(windows)]
+        {
+            // On Windows the original path is renamed away and best-effort
+            // deleted; either outcome (gone, or left as .old) is acceptable,
+            // but the original path must no longer exist.
+            assert!(!exe.exists());
+        }
+    }
+
+    #[test]
+    fn remove_binary_errors_when_file_missing() {
+        let dir = tempdir().unwrap();
+        let exe = dir.path().join("does-not-exist");
+        assert!(remove_binary(&exe).is_err());
+    }
+}

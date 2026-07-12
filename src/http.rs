@@ -87,3 +87,53 @@ pub fn log_response(
         eprintln!();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_client_stores_verbose_and_retries() {
+        let client = HttpClient::new(true, 5).unwrap();
+        assert!(client.is_verbose());
+        assert_eq!(client.retries(), 5);
+
+        let client = HttpClient::new(false, 0).unwrap();
+        assert!(!client.is_verbose());
+        assert_eq!(client.retries(), 0);
+    }
+
+    #[test]
+    fn agent_is_accessible() {
+        let client = HttpClient::new(false, 3).unwrap();
+        // Just confirm the accessor returns a usable agent reference; no
+        // network call is made.
+        let _agent: &ureq::Agent = client.agent();
+    }
+
+    #[test]
+    fn log_request_and_response_are_silent_when_not_verbose() {
+        // These should not panic and should simply do nothing when verbose
+        // mode is off - there is no way to assert on stderr output directly,
+        // but exercising the non-verbose branch still gives us coverage of
+        // the early-return path.
+        let client = HttpClient::new(false, 3).unwrap();
+        log_request(&client, "GET", "https://example.invalid/");
+
+        let headers = ureq::http::HeaderMap::new();
+        log_response(&client, 200, "OK", &headers);
+    }
+
+    #[test]
+    fn log_request_and_response_do_not_panic_when_verbose() {
+        let client = HttpClient::new(true, 3).unwrap();
+        log_request(&client, "GET", "https://example.invalid/");
+
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert(
+            ureq::http::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        );
+        log_response(&client, 404, "Not Found", &headers);
+    }
+}

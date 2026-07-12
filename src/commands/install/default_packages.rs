@@ -71,3 +71,56 @@ pub fn install_default_packages(config: &Config, version: &GoVersion) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn version() -> GoVersion {
+        GoVersion::parse("1.22.4").unwrap()
+    }
+
+    #[test]
+    fn no_op_when_default_packages_file_missing() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        // Should return immediately without touching the filesystem further.
+        install_default_packages(&config, &version());
+    }
+
+    #[test]
+    fn no_op_when_file_has_only_comments_and_blank_lines() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        std::fs::write(
+            config.default_packages_file(),
+            "# a comment\n\n   \n# another\n",
+        )
+        .unwrap();
+
+        install_default_packages(&config, &version());
+    }
+
+    #[test]
+    fn attempts_install_for_each_listed_package_even_without_go_binary() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            root: dir.path().to_path_buf(),
+        };
+        std::fs::write(
+            config.default_packages_file(),
+            "golang.org/x/tools/gopls@latest\n# comment\n\ngithub.com/go-delve/delve/cmd/dlv@latest\n",
+        )
+        .unwrap();
+
+        // The `go` binary does not exist in this tempdir, so each install
+        // attempt fails, but the function must not panic and must process
+        // every non-comment, non-blank line.
+        install_default_packages(&config, &version());
+    }
+}

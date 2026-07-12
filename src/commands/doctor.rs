@@ -163,87 +163,62 @@ pub fn run(config: &Config, shell_str: Option<&str>) -> Result<()> {
     let path_var = std::env::var("PATH").unwrap_or_default();
     let versions_dir = config.versions_dir();
 
-    let go_paths: Vec<std::path::PathBuf> = path_var
-        .split(path_sep)
-        .map(std::path::Path::new)
-        .filter_map(|dir| {
-            let candidate = dir.join(go_name);
-            if candidate.is_file() {
-                Some(candidate)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let go_paths = find_go_binaries(&path_var, path_sep, go_name);
 
-    match go_paths.len() {
-        0 => {
+    match classify_go_paths(&go_paths, &versions_dir, &current_dir) {
+        GoPathStatus::None => {
             // No Go in PATH at all - only relevant if a version is supposed to be active.
         }
-        1 => {
-            let go = &go_paths[0];
-            // Accept both ~/.gvm/versions/<tag>/bin/go and ~/.gvm/current/bin/go
-            // (the junction path introduced in v1.1.0 for universal shell support).
-            if go.starts_with(&versions_dir) || go.starts_with(&current_dir) {
-                ok(&format!("Active Go is gvm-managed ({})", go.display()));
-            } else {
-                fail(&format!(
-                    "Active Go is NOT managed by gvm: {}",
-                    go.display()
-                ));
-                println!(
-                    "    Hint: remove the system Go package or run 'gvm setup' \
-                          so gvm's PATH entry comes first."
-                );
-                issues += 1;
+        GoPathStatus::SingleManaged(go) => {
+            ok(&format!("Active Go is gvm-managed ({})", go.display()));
+        }
+        GoPathStatus::SingleUnmanaged(go) => {
+            fail(&format!(
+                "Active Go is NOT managed by gvm: {}",
+                go.display()
+            ));
+            println!(
+                "    Hint: remove the system Go package or run 'gvm setup' \
+                      so gvm's PATH entry comes first."
+            );
+            issues += 1;
+        }
+        GoPathStatus::MultipleAllManaged(active) => {
+            // All extra entries are other gvm-managed paths (e.g. both the versioned
+            // directory and the ~/.gvm/current junction appear in PATH). Harmless.
+            ok(&format!("Active Go is gvm-managed ({})", active.display()));
+        }
+        GoPathStatus::MultipleShadowedNonGvm { shadowed, .. } => {
+            warn(&format!(
+                "{} Go binaries found in PATH - {} non-gvm installation(s) are shadowed \
+                 (consider removing them to avoid confusion):",
+                shadowed.len() + 1,
+                shadowed.len()
+            ));
+            for path in &shadowed {
+                println!("    {} (non-gvm, shadowed)", path.display());
             }
         }
-        n => {
-            let first_is_gvm =
-                go_paths[0].starts_with(&versions_dir) || go_paths[0].starts_with(&current_dir);
-            if first_is_gvm {
-                let non_gvm_shadowed: Vec<_> = go_paths
-                    .iter()
-                    .skip(1)
-                    .filter(|p| !p.starts_with(&versions_dir) && !p.starts_with(&current_dir))
-                    .collect();
-                if non_gvm_shadowed.is_empty() {
-                    // All extra entries are other gvm-managed paths (e.g. both the versioned
-                    // directory and the ~/.gvm/current junction appear in PATH). Harmless.
-                    ok(&format!(
-                        "Active Go is gvm-managed ({})",
-                        go_paths[0].display()
-                    ));
+        GoPathStatus::MultipleActiveNotManaged { all } => {
+            fail(&format!(
+                "{} Go binaries in PATH - gvm's version is being shadowed:",
+                all.len()
+            ));
+            for (i, path) in all.iter().enumerate() {
+                let label = if i == 0 {
+                    " (active - NOT gvm-managed)"
+                } else if path.starts_with(&versions_dir) || path.starts_with(&current_dir) {
+                    " (gvm-managed - shadowed)"
                 } else {
-                    warn(&format!(
-                        "{n} Go binaries found in PATH - {} non-gvm installation(s) are shadowed \
-                         (consider removing them to avoid confusion):",
-                        non_gvm_shadowed.len()
-                    ));
-                    for path in non_gvm_shadowed.iter() {
-                        println!("    {} (non-gvm, shadowed)", path.display());
-                    }
-                }
-            } else {
-                fail(&format!(
-                    "{n} Go binaries in PATH - gvm's version is being shadowed:"
-                ));
-                for (i, path) in go_paths.iter().enumerate() {
-                    let label = if i == 0 {
-                        " (active - NOT gvm-managed)"
-                    } else if path.starts_with(&versions_dir) || path.starts_with(&current_dir) {
-                        " (gvm-managed - shadowed)"
-                    } else {
-                        " (shadowed)"
-                    };
-                    println!("    {}{label}", path.display());
-                }
-                println!(
-                    "    Hint: remove the system Go package or run 'gvm setup' \
-                          to ensure gvm's PATH entry is first."
-                );
-                issues += 1;
+                    " (shadowed)"
+                };
+                println!("    {}{label}", path.display());
             }
+            println!(
+                "    Hint: remove the system Go package or run 'gvm setup' \
+                      to ensure gvm's PATH entry is first."
+            );
+            issues += 1;
         }
     }
 
@@ -271,4 +246,234 @@ fn fail(msg: &str) {
 
 fn warn(msg: &str) {
     println!("  {} {msg}", "!".yellow());
+}
+
+/// Scans every directory in `path_var` (a PATH-like string, entries separated
+/// by `path_sep`) for an executable named `go_name`, in order.
+///
+/// Pure with respect to the environment - callers pass in the PATH string and
+/// separator explicitly rather than reading `std::env::var("PATH")` here, so
+/// this function can be exercised with a synthetic PATH in tests.
+fn find_go_binaries(path_var: &str, path_sep: char, go_name: &str) -> Vec<std::path::PathBuf> {
+    path_var
+        .split(path_sep)
+        .map(std::path::Path::new)
+        .filter_map(|dir| {
+            let candidate = dir.join(go_name);
+            if candidate.is_file() {
+                Some(candidate)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Outcome of classifying the set of `go` binaries found on `PATH` against
+/// gvm's managed directories.
+#[derive(Debug, PartialEq, Eq)]
+enum GoPathStatus {
+    /// No `go` binary found anywhere on `PATH`.
+    None,
+    /// Exactly one `go` binary, and it is gvm-managed.
+    SingleManaged(std::path::PathBuf),
+    /// Exactly one `go` binary, and it is NOT gvm-managed.
+    SingleUnmanaged(std::path::PathBuf),
+    /// Multiple `go` binaries, all gvm-managed (e.g. the versioned directory
+    /// and the `current` junction both appear on `PATH`). Harmless.
+    MultipleAllManaged(std::path::PathBuf),
+    /// Multiple `go` binaries; the active (first) one is gvm-managed, but one
+    /// or more non-gvm installations are shadowed behind it.
+    MultipleShadowedNonGvm {
+        active: std::path::PathBuf,
+        shadowed: Vec<std::path::PathBuf>,
+    },
+    /// Multiple `go` binaries; the active (first) one is NOT gvm-managed, so
+    /// gvm's own installation is being shadowed.
+    MultipleActiveNotManaged { all: Vec<std::path::PathBuf> },
+}
+
+/// Classifies `go_paths` (in PATH order) against gvm's `versions_dir` and
+/// `current_dir` to determine what, if anything, is wrong with the active Go
+/// binary resolution.
+fn classify_go_paths(
+    go_paths: &[std::path::PathBuf],
+    versions_dir: &std::path::Path,
+    current_dir: &std::path::Path,
+) -> GoPathStatus {
+    let is_managed =
+        |p: &std::path::Path| p.starts_with(versions_dir) || p.starts_with(current_dir);
+
+    match go_paths.len() {
+        0 => GoPathStatus::None,
+        1 => {
+            let go = go_paths[0].clone();
+            if is_managed(&go) {
+                GoPathStatus::SingleManaged(go)
+            } else {
+                GoPathStatus::SingleUnmanaged(go)
+            }
+        }
+        _ => {
+            if is_managed(&go_paths[0]) {
+                let shadowed: Vec<_> = go_paths
+                    .iter()
+                    .skip(1)
+                    .filter(|p| !is_managed(p))
+                    .cloned()
+                    .collect();
+                if shadowed.is_empty() {
+                    GoPathStatus::MultipleAllManaged(go_paths[0].clone())
+                } else {
+                    GoPathStatus::MultipleShadowedNonGvm {
+                        active: go_paths[0].clone(),
+                        shadowed,
+                    }
+                }
+            } else {
+                GoPathStatus::MultipleActiveNotManaged {
+                    all: go_paths.to_vec(),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn make_go(dir: &std::path::Path, go_name: &str) -> std::path::PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let go = dir.join(go_name);
+        std::fs::write(&go, b"").unwrap();
+        go
+    }
+
+    #[test]
+    fn find_go_binaries_returns_empty_for_empty_path() {
+        assert!(find_go_binaries("", ':', "go").is_empty());
+    }
+
+    #[test]
+    fn find_go_binaries_finds_executables_in_order() {
+        // Use a separator that never collides with a Windows drive-letter
+        // colon (e.g. `C:\...`) so the test is meaningful on every platform.
+        let sep = '|';
+        let root = tempdir().unwrap();
+        let dir_a = root.path().join("a");
+        let dir_b = root.path().join("b");
+        let dir_c = root.path().join("c"); // no go binary here
+        let go_a = make_go(&dir_a, "go");
+        let go_b = make_go(&dir_b, "go");
+        std::fs::create_dir_all(&dir_c).unwrap();
+
+        let path_var = format!(
+            "{}{sep}{}{sep}{}",
+            dir_a.display(),
+            dir_c.display(),
+            dir_b.display()
+        );
+        let found = find_go_binaries(&path_var, sep, "go");
+        assert_eq!(found, vec![go_a, go_b]);
+    }
+
+    #[test]
+    fn find_go_binaries_ignores_directories_named_like_the_binary() {
+        let root = tempdir().unwrap();
+        let dir = root.path().join("bin");
+        // Create a directory named "go" instead of a file - should not count.
+        std::fs::create_dir_all(dir.join("go")).unwrap();
+
+        let found = find_go_binaries(&dir.display().to_string(), '|', "go");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn classify_empty_is_none() {
+        let versions_dir = std::path::Path::new("/gvm/versions");
+        let current_dir = std::path::Path::new("/gvm/current");
+        assert_eq!(
+            classify_go_paths(&[], versions_dir, current_dir),
+            GoPathStatus::None
+        );
+    }
+
+    #[test]
+    fn classify_single_managed_via_versions_dir() {
+        let versions_dir = std::path::Path::new("/gvm/versions");
+        let current_dir = std::path::Path::new("/gvm/current");
+        let go = versions_dir.join("go1.22.4/bin/go");
+        assert_eq!(
+            classify_go_paths(std::slice::from_ref(&go), versions_dir, current_dir),
+            GoPathStatus::SingleManaged(go)
+        );
+    }
+
+    #[test]
+    fn classify_single_managed_via_current_dir() {
+        let versions_dir = std::path::Path::new("/gvm/versions");
+        let current_dir = std::path::Path::new("/gvm/current");
+        let go = current_dir.join("bin/go");
+        assert_eq!(
+            classify_go_paths(std::slice::from_ref(&go), versions_dir, current_dir),
+            GoPathStatus::SingleManaged(go)
+        );
+    }
+
+    #[test]
+    fn classify_single_unmanaged() {
+        let versions_dir = std::path::Path::new("/gvm/versions");
+        let current_dir = std::path::Path::new("/gvm/current");
+        let go = std::path::PathBuf::from("/usr/local/go/bin/go");
+        assert_eq!(
+            classify_go_paths(std::slice::from_ref(&go), versions_dir, current_dir),
+            GoPathStatus::SingleUnmanaged(go)
+        );
+    }
+
+    #[test]
+    fn classify_multiple_all_managed_is_harmless() {
+        let versions_dir = std::path::Path::new("/gvm/versions");
+        let current_dir = std::path::Path::new("/gvm/current");
+        let go1 = current_dir.join("bin/go");
+        let go2 = versions_dir.join("go1.22.4/bin/go");
+        assert_eq!(
+            classify_go_paths(&[go1.clone(), go2], versions_dir, current_dir),
+            GoPathStatus::MultipleAllManaged(go1)
+        );
+    }
+
+    #[test]
+    fn classify_multiple_shadowed_non_gvm() {
+        let versions_dir = std::path::Path::new("/gvm/versions");
+        let current_dir = std::path::Path::new("/gvm/current");
+        let active = current_dir.join("bin/go");
+        let shadowed = std::path::PathBuf::from("/usr/local/go/bin/go");
+        assert_eq!(
+            classify_go_paths(
+                &[active.clone(), shadowed.clone()],
+                versions_dir,
+                current_dir
+            ),
+            GoPathStatus::MultipleShadowedNonGvm {
+                active,
+                shadowed: vec![shadowed],
+            }
+        );
+    }
+
+    #[test]
+    fn classify_multiple_active_not_managed() {
+        let versions_dir = std::path::Path::new("/gvm/versions");
+        let current_dir = std::path::Path::new("/gvm/current");
+        let system_go = std::path::PathBuf::from("/usr/local/go/bin/go");
+        let managed_go = versions_dir.join("go1.22.4/bin/go");
+        let all = vec![system_go, managed_go];
+        assert_eq!(
+            classify_go_paths(&all, versions_dir, current_dir),
+            GoPathStatus::MultipleActiveNotManaged { all }
+        );
+    }
 }
