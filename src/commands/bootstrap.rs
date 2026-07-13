@@ -241,6 +241,8 @@ mod tests {
         // "could not find a bootstrap release" error rather than panicking or
         // attempting a network call.
         let err = resolve_bootstrap(&config, &client, &target, None, &[]).unwrap_err();
-        assert!(err.to_string().contains("Could not find a bootstrap release"));
+        assert!(err
+            .to_string()
+            .contains("Could not find a bootstrap release"));
     }
 }
