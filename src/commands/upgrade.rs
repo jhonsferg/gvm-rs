@@ -275,7 +275,13 @@ fn extract_upgrade_binary(archive: &Path) -> Result<std::path::PathBuf> {
 /// original name.
 fn replace_binary(new_binary: &Path) -> Result<()> {
     let exe = std::env::current_exe().context("Cannot determine gvm binary location")?;
+    replace_binary_at(new_binary, &exe)
+}
 
+/// Does the actual replacement work for [`replace_binary`], taking the
+/// target executable path as a parameter so it can be exercised in tests
+/// against a fake "installed" binary instead of the real running process.
+fn replace_binary_at(new_binary: &Path, exe: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -319,7 +325,95 @@ fn replace_binary(new_binary: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_semver, release_archive_name};
+    use super::{extract_upgrade_binary, parse_semver, release_archive_name, replace_binary_at};
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    /// Binary filename expected inside the release archive on this platform.
+    #[cfg(not(windows))]
+    const BIN_NAME: &str = "gvm";
+    #[cfg(windows)]
+    const BIN_NAME: &str = "gvm.exe";
+
+    /// Builds a fixture archive (tar.gz on Unix, zip on Windows) containing a
+    /// single file named `BIN_NAME` with the given content, and writes it to
+    /// `dest`.
+    #[cfg(not(windows))]
+    fn write_fixture_archive(dest: &Path, content: &[u8]) {
+        let file = std::fs::File::create(dest).unwrap();
+        let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut ar = tar::Builder::new(enc);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        ar.append_data(&mut header, BIN_NAME, content).unwrap();
+        ar.finish().unwrap();
+    }
+
+    #[cfg(windows)]
+    fn write_fixture_archive(dest: &Path, content: &[u8]) {
+        let file = std::fs::File::create(dest).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file::<_, ()>(BIN_NAME, zip::write::FileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut zip, content).unwrap();
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn extract_upgrade_binary_finds_and_extracts_entry() {
+        let dir = tempdir().unwrap();
+        let archive_ext = if cfg!(windows) { "zip" } else { "tar.gz" };
+        let archive_path = dir.path().join(format!("gvm.{archive_ext}"));
+        write_fixture_archive(&archive_path, b"fake binary contents");
+
+        let extracted = extract_upgrade_binary(&archive_path).unwrap();
+        let contents = std::fs::read(&extracted).unwrap();
+        assert_eq!(contents, b"fake binary contents");
+
+        let _ = std::fs::remove_file(&extracted);
+    }
+
+    #[test]
+    fn extract_upgrade_binary_errors_when_entry_missing() {
+        let dir = tempdir().unwrap();
+        let archive_ext = if cfg!(windows) { "zip" } else { "tar.gz" };
+        let archive_path = dir.path().join(format!("empty.{archive_ext}"));
+
+        #[cfg(not(windows))]
+        {
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            let ar = tar::Builder::new(enc);
+            ar.into_inner().unwrap().finish().unwrap();
+        }
+        #[cfg(windows)]
+        {
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let zip = zip::ZipWriter::new(file);
+            zip.finish().unwrap();
+        }
+
+        let err = extract_upgrade_binary(&archive_path).unwrap_err();
+        assert!(err.to_string().contains("did not contain"));
+    }
+
+    #[test]
+    fn replace_binary_at_swaps_target_with_new_binary() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("gvm-fake-exe");
+        std::fs::write(&target, b"old contents").unwrap();
+
+        let new_binary = dir.path().join("staged-new-binary");
+        std::fs::write(&new_binary, b"new contents").unwrap();
+
+        replace_binary_at(&new_binary, &target).unwrap();
+
+        let final_contents = std::fs::read(&target).unwrap();
+        assert_eq!(final_contents, b"new contents");
+        assert!(!new_binary.exists(), "staged file must be consumed");
+    }
 
     #[test]
     fn semver_parses_correctly() {
