@@ -277,10 +277,8 @@ fn compile(
     if no_cgo {
         cmd.env("CGO_ENABLED", "0");
     }
-    for kv in env_vars {
-        if let Some((key, val)) = kv.split_once('=') {
-            cmd.env(key, val);
-        }
+    for (key, val) in parse_env_vars(env_vars) {
+        cmd.env(key, val);
     }
 
     // Always pipe both streams so we can show/buffer them.
@@ -330,14 +328,8 @@ fn compile(
 
     for line in rx {
         // Update spinner label when a recognised phase marker appears.
-        if line.contains("Building C bootstrap") {
-            pb.set_message("Building C bootstrap tool...");
-        } else if line.contains("Building compilers") || line.contains("Building Go bootstrap") {
-            pb.set_message("Building Go compiler...");
-        } else if line.contains("Building packages") || line.contains("Building commands") {
-            pb.set_message("Building standard library...");
-        } else if line.contains("Installed Go for") || line.contains("Installed commands") {
-            pb.set_message("Finalizing...");
+        if let Some(msg) = phase_message(&line) {
+            pb.set_message(msg);
         }
 
         if verbose {
@@ -405,4 +397,116 @@ fn compile(
     }
 
     Ok(())
+}
+
+/// Maps a line of `make.bash`/`make.bat` output to a human-readable spinner
+/// label when it marks the start of a recognised build phase.
+///
+/// Returns `None` for lines that don't match any known phase marker, in
+/// which case the spinner keeps its previous label.
+fn phase_message(line: &str) -> Option<&'static str> {
+    if line.contains("Building C bootstrap") {
+        Some("Building C bootstrap tool...")
+    } else if line.contains("Building compilers") || line.contains("Building Go bootstrap") {
+        Some("Building Go compiler...")
+    } else if line.contains("Building packages") || line.contains("Building commands") {
+        Some("Building standard library...")
+    } else if line.contains("Installed Go for") || line.contains("Installed commands") {
+        Some("Finalizing...")
+    } else {
+        None
+    }
+}
+
+/// Parses `--env KEY=VALUE` command-line arguments into `(key, value)` pairs.
+///
+/// Entries without an `=` are silently dropped rather than erroring, matching
+/// the previous inline behaviour: a malformed `--env` flag should not abort
+/// an otherwise-valid build.
+fn parse_env_vars(env_vars: &[String]) -> Vec<(&str, &str)> {
+    env_vars
+        .iter()
+        .filter_map(|kv| kv.split_once('='))
+        .collect()
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_env_vars, phase_message};
+
+    #[test]
+    fn phase_message_detects_c_bootstrap() {
+        assert_eq!(
+            phase_message("##### Building C bootstrap tool."),
+            Some("Building C bootstrap tool...")
+        );
+    }
+
+    #[test]
+    fn phase_message_detects_compiler_phase() {
+        assert_eq!(
+            phase_message("##### Building compilers and Go bootstrap tool for host, linux/amd64."),
+            Some("Building Go compiler...")
+        );
+        assert_eq!(
+            phase_message("##### Building Go bootstrap cmd/go (go_bootstrap) using Go."),
+            Some("Building Go compiler...")
+        );
+    }
+
+    #[test]
+    fn phase_message_detects_stdlib_phase() {
+        assert_eq!(
+            phase_message("##### Building packages and commands for linux/amd64."),
+            Some("Building standard library...")
+        );
+        assert_eq!(
+            phase_message("##### Building commands only."),
+            Some("Building standard library...")
+        );
+    }
+
+    #[test]
+    fn phase_message_detects_finalizing_phase() {
+        assert_eq!(
+            phase_message("Installed Go for linux/amd64 in /tmp/go"),
+            Some("Finalizing...")
+        );
+        assert_eq!(
+            phase_message("Installed commands in /tmp/go/bin"),
+            Some("Finalizing...")
+        );
+    }
+
+    #[test]
+    fn phase_message_returns_none_for_unrecognized_line() {
+        assert_eq!(phase_message("some unrelated compiler output"), None);
+        assert_eq!(phase_message(""), None);
+    }
+
+    #[test]
+    fn parse_env_vars_splits_key_value_pairs() {
+        let vars = vec!["FOO=bar".to_string(), "BAZ=qux".to_string()];
+        assert_eq!(parse_env_vars(&vars), vec![("FOO", "bar"), ("BAZ", "qux")]);
+    }
+
+    #[test]
+    fn parse_env_vars_keeps_value_with_embedded_equals() {
+        let vars = vec!["FOO=a=b=c".to_string()];
+        assert_eq!(parse_env_vars(&vars), vec![("FOO", "a=b=c")]);
+    }
+
+    #[test]
+    fn parse_env_vars_drops_malformed_entries() {
+        let vars = vec!["NOVALUE".to_string(), "FOO=bar".to_string()];
+        assert_eq!(parse_env_vars(&vars), vec![("FOO", "bar")]);
+    }
+
+    #[test]
+    fn parse_env_vars_handles_empty_input() {
+        let vars: Vec<String> = vec![];
+        assert!(parse_env_vars(&vars).is_empty());
+    }
 }
