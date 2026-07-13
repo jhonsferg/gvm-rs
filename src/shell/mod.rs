@@ -633,7 +633,10 @@ mod tests {
         let content = fs::read_to_string(&sh.profile).unwrap();
         assert!(!content.contains("# gvm init"));
         assert!(!content.contains("# gvm wrapper"));
-        assert!(content.contains("export FOO=bar"), "user content must survive");
+        assert!(
+            content.contains("export FOO=bar"),
+            "user content must survive"
+        );
     }
 
     #[test]
