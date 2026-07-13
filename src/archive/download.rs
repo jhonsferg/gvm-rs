@@ -316,4 +316,23 @@ mod tests {
         let err = verify_sha256(&file, "deadbeef").unwrap_err();
         assert!(err.to_string().contains("Cannot open"));
     }
+
+    #[test]
+    fn progress_bar_is_determinate_when_length_known() {
+        let bar = progress_bar(1000, 250);
+        assert_eq!(bar.length(), Some(1000));
+        assert_eq!(bar.position(), 250);
+    }
+
+    #[test]
+    fn progress_bar_is_spinner_when_length_unknown() {
+        let bar = progress_bar(0, 0);
+        assert_eq!(bar.length(), None);
+    }
+
+    #[test]
+    fn part_path_handles_paths_without_extension() {
+        let dest = Path::new("go-archive");
+        assert_eq!(part_path(dest), PathBuf::from("go-archive.part"));
+    }
 }

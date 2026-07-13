@@ -368,6 +368,97 @@ gvm() { command gvm "$@"; }
     }
 
     #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn update_path_block_adds_block_to_new_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("profile");
+
+        let changed = update_path_block(&path).unwrap();
+        assert!(changed);
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("# gvm path"));
+        assert!(content.contains(r#"export PATH="$HOME/.gvm/current/bin:$PATH""#));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn update_path_block_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("profile");
+
+        assert!(update_path_block(&path).unwrap());
+        // Second call sees the same expected content already present.
+        let changed_again = update_path_block(&path).unwrap();
+        assert!(!changed_again, "second call must report no change");
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content.matches("# gvm path").count(), 1);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn update_path_block_preserves_existing_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("profile");
+        fs::write(&path, "# my custom profile\nexport FOO=bar\n").unwrap();
+
+        update_path_block(&path).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("export FOO=bar"));
+        assert!(content.contains("# gvm path"));
+    }
+
+    #[test]
+    fn ensure_profile_creates_both_blocks_on_new_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("profile");
+
+        let modified = ensure_profile(
+            &path,
+            "eval \"$(gvm env --shell bash)\"",
+            "gvm() { command gvm \"$@\"; }",
+        )
+        .unwrap();
+        assert!(modified);
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("# gvm init"));
+        assert!(content.contains("eval \"$(gvm env --shell bash)\""));
+        assert!(content.contains("# gvm wrapper"));
+        assert!(content.contains("gvm() { command gvm \"$@\"; }"));
+    }
+
+    #[test]
+    fn ensure_profile_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("profile");
+        let init = "eval \"$(gvm env --shell bash)\"";
+        let wrapper = "gvm() { command gvm \"$@\"; }";
+
+        assert!(ensure_profile(&path, init, wrapper).unwrap());
+        let changed_again = ensure_profile(&path, init, wrapper).unwrap();
+        assert!(!changed_again, "second call must report no change");
+    }
+
+    #[test]
+    fn ensure_profile_updates_stale_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("profile");
+        let old_wrapper = "gvm() { command gvm \"$@\"; }";
+        let new_wrapper = "gvm() { command gvm \"$@\"; case \"$1\" in use) gvm env;; esac; }";
+
+        ensure_profile(&path, "eval init", old_wrapper).unwrap();
+        let modified = ensure_profile(&path, "eval init", new_wrapper).unwrap();
+        assert!(modified);
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains(new_wrapper));
+        assert!(!content.contains(old_wrapper));
+    }
+
+    #[test]
     fn strip_profile_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("profile");

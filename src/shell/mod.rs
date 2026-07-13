@@ -508,6 +508,145 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    /// Test-only [`ShellConfig`] that wraps [`Bash`] but redirects
+    /// `profile_path()`/`login_profile_path()` into a tempdir, so
+    /// `inject_profile`, `inject_login_profile`, and `strip_profile` can be
+    /// exercised end-to-end against production code instead of reimplementing
+    /// their logic in the test itself.
+    #[derive(Debug)]
+    struct TempShell {
+        profile: PathBuf,
+        login_profile: PathBuf,
+    }
+
+    impl ShellConfig for TempShell {
+        fn name(&self) -> &'static str {
+            "bash"
+        }
+        fn env_script(&self, ctx: &EnvContext<'_>) -> String {
+            bash::env_script(ctx)
+        }
+        fn profile_path(&self) -> Option<PathBuf> {
+            Some(self.profile.clone())
+        }
+        fn login_profile_path(&self) -> Option<PathBuf> {
+            Some(self.login_profile.clone())
+        }
+        fn init_line(&self) -> &'static str {
+            r#"eval "$(gvm env --shell bash)""#
+        }
+        fn wrapper_function(&self) -> &'static str {
+            bash::wrapper_function()
+        }
+        fn shell_version_script(&self, tag: &str, bin: &Path, root: &Path) -> String {
+            bash::shell_version_script(tag, bin, root)
+        }
+        fn shell_unset_script(&self) -> &'static str {
+            bash::shell_unset_script()
+        }
+        fn needs_bin_path_in_init(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn inject_profile_writes_init_and_wrapper_blocks() {
+        let dir = tempdir().unwrap();
+        let sh = TempShell {
+            profile: dir.path().join("profile"),
+            login_profile: dir.path().join("login_profile"),
+        };
+
+        inject_profile(&sh, None).unwrap();
+
+        let content = fs::read_to_string(&sh.profile).unwrap();
+        assert!(content.contains("# gvm init"));
+        assert!(content.contains("# gvm wrapper"));
+        assert!(content.contains(r#"eval "$(gvm env --shell bash)""#));
+    }
+
+    #[test]
+    fn inject_profile_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let sh = TempShell {
+            profile: dir.path().join("profile"),
+            login_profile: dir.path().join("login_profile"),
+        };
+
+        inject_profile(&sh, None).unwrap();
+        let first = fs::read_to_string(&sh.profile).unwrap();
+        inject_profile(&sh, None).unwrap();
+        let second = fs::read_to_string(&sh.profile).unwrap();
+
+        assert_eq!(first, second, "second run must not change the file");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn inject_profile_prepends_bin_path_when_needed() {
+        let dir = tempdir().unwrap();
+        let sh = TempShell {
+            profile: dir.path().join("profile"),
+            login_profile: dir.path().join("login_profile"),
+        };
+        let bin_dir = dir.path().join("bin");
+
+        inject_profile(&sh, Some(&bin_dir)).unwrap();
+
+        let content = fs::read_to_string(&sh.profile).unwrap();
+        assert!(content.contains("export PATH="));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn inject_login_profile_writes_path_block() {
+        let dir = tempdir().unwrap();
+        let sh = TempShell {
+            profile: dir.path().join("profile"),
+            login_profile: dir.path().join("login_profile"),
+        };
+
+        inject_login_profile(&sh).unwrap();
+
+        let content = fs::read_to_string(&sh.login_profile).unwrap();
+        assert!(content.contains("# gvm path"));
+        assert!(content.contains(r#"export PATH="$HOME/.gvm/current/bin:$PATH""#));
+    }
+
+    #[test]
+    fn strip_profile_removes_gvm_blocks_after_inject() {
+        let dir = tempdir().unwrap();
+        let sh = TempShell {
+            profile: dir.path().join("profile"),
+            login_profile: dir.path().join("login_profile"),
+        };
+        fs::write(&sh.profile, "# user config\nexport FOO=bar\n").unwrap();
+
+        inject_profile(&sh, None).unwrap();
+        assert!(fs::read_to_string(&sh.profile)
+            .unwrap()
+            .contains("# gvm init"));
+
+        let changed = strip_profile(&sh.profile).unwrap();
+        assert!(changed);
+
+        let content = fs::read_to_string(&sh.profile).unwrap();
+        assert!(!content.contains("# gvm init"));
+        assert!(!content.contains("# gvm wrapper"));
+        assert!(
+            content.contains("export FOO=bar"),
+            "user content must survive"
+        );
+    }
+
+    #[test]
+    fn strip_profile_returns_false_for_missing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("does-not-exist");
+        let changed = strip_profile(&path).unwrap();
+        assert!(!changed);
+    }
+
     fn run_inject(shell: &dyn ShellConfig, existing: &str) -> String {
         const INIT_MARKER: &str = "# gvm init";
         const WRAPPER_MARKER: &str = "# gvm wrapper";
