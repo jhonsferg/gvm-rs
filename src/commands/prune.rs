@@ -222,6 +222,7 @@ fn dir_size_mb(dir: &Path) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ConfigMut;
     use std::fs;
     use tempfile::TempDir;
 
@@ -340,5 +341,89 @@ mod tests {
     fn dir_size_of_nonexistent_dir_is_zero() {
         let dir = PathBuf::from("/nonexistent/directory/1234567890");
         assert_eq!(dir_size_mb(&dir), 0.0);
+    }
+
+    fn test_config(root: &Path) -> Config {
+        Config {
+            root: root.to_path_buf(),
+        }
+    }
+
+    fn fake_install(config: &Config, tag: &str) {
+        fs::create_dir_all(config.version_dir(tag)).unwrap();
+        fs::write(config.version_dir(tag).join("marker.txt"), "x").unwrap();
+    }
+
+    #[test]
+    fn run_prints_message_when_nothing_installed() {
+        let dir = tmp();
+        let config = test_config(dir.path());
+        config.ensure_dirs().unwrap();
+
+        // Should return Ok without touching the filesystem further.
+        run(&config, true, false, None).unwrap();
+    }
+
+    #[test]
+    fn run_dry_run_does_not_remove_anything() {
+        let dir = tmp();
+        let config = test_config(dir.path());
+        config.ensure_dirs().unwrap();
+        fake_install(&config, "go1.10.1");
+        fake_install(&config, "go1.11.1");
+        fs::write(config.version_file(), "go1.10.1").unwrap();
+
+        run(&config, false, true, None).unwrap();
+
+        assert!(config.version_dir("go1.10.1").exists());
+        assert!(config.version_dir("go1.11.1").exists());
+    }
+
+    #[test]
+    fn run_force_removes_unreferenced_versions() {
+        let dir = tmp();
+        let config = test_config(dir.path());
+        config.ensure_dirs().unwrap();
+        fake_install(&config, "go1.12.1");
+        fake_install(&config, "go1.13.1");
+        fs::write(config.version_file(), "go1.12.1").unwrap();
+
+        run(&config, true, false, None).unwrap();
+
+        assert!(
+            config.version_dir("go1.12.1").exists(),
+            "referenced version must survive"
+        );
+        assert!(
+            !config.version_dir("go1.13.1").exists(),
+            "unreferenced version must be removed"
+        );
+    }
+
+    #[test]
+    fn run_reports_nothing_to_prune_when_all_referenced() {
+        let dir = tmp();
+        let config = test_config(dir.path());
+        config.ensure_dirs().unwrap();
+        fake_install(&config, "go1.14.1");
+        fs::write(config.version_file(), "go1.14.1").unwrap();
+
+        run(&config, true, false, None).unwrap();
+
+        assert!(config.version_dir("go1.14.1").exists());
+    }
+
+    #[test]
+    fn run_errors_when_scan_dir_is_not_a_directory() {
+        let dir = tmp();
+        let config = test_config(dir.path());
+        config.ensure_dirs().unwrap();
+        fake_install(&config, "go1.15.1");
+
+        let not_a_dir = dir.path().join("not-a-directory.txt");
+        fs::write(&not_a_dir, "x").unwrap();
+
+        let err = run(&config, true, false, Some(not_a_dir.to_str().unwrap())).unwrap_err();
+        assert!(err.to_string().contains("is not a directory"));
     }
 }
