@@ -380,7 +380,12 @@ mod tests {
         fn wrapper_function(&self) -> &'static str {
             "gvm() { command gvm \"$@\"; }"
         }
-        fn shell_version_script(&self, _tag: &str, _bin: &std::path::Path, _root: &std::path::Path) -> String {
+        fn shell_version_script(
+            &self,
+            _tag: &str,
+            _bin: &std::path::Path,
+            _root: &std::path::Path,
+        ) -> String {
             String::new()
         }
         fn shell_unset_script(&self) -> &'static str {
