@@ -415,7 +415,12 @@ gvm() { command gvm "$@"; }
         let dir = tempdir().unwrap();
         let path = dir.path().join("profile");
 
-        let modified = ensure_profile(&path, "eval \"$(gvm env --shell bash)\"", "gvm() { command gvm \"$@\"; }").unwrap();
+        let modified = ensure_profile(
+            &path,
+            "eval \"$(gvm env --shell bash)\"",
+            "gvm() { command gvm \"$@\"; }",
+        )
+        .unwrap();
         assert!(modified);
 
         let content = fs::read_to_string(&path).unwrap();
