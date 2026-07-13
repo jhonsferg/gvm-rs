@@ -297,7 +297,7 @@ fn replace_binary_at(new_binary: &Path, exe: &Path) -> Result<()> {
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
             .context("Cannot set execute permission on new binary")?;
 
-        if let Err(e) = std::fs::rename(&staged, &exe) {
+        if let Err(e) = std::fs::rename(&staged, exe) {
             let _ = std::fs::remove_file(&staged);
             return Err(e).with_context(|| format!("Cannot replace {}", exe.display()));
         }
@@ -306,11 +306,11 @@ fn replace_binary_at(new_binary: &Path, exe: &Path) -> Result<()> {
     #[cfg(windows)]
     {
         let old = exe.with_file_name("gvm.exe.old");
-        std::fs::rename(&exe, &old)
+        std::fs::rename(exe, &old)
             .with_context(|| format!("Cannot rename current binary {}", exe.display()))?;
 
-        if let Err(e) = std::fs::rename(new_binary, &exe) {
-            let _ = std::fs::rename(&old, &exe);
+        if let Err(e) = std::fs::rename(new_binary, exe) {
+            let _ = std::fs::rename(&old, exe);
             let _ = std::fs::remove_file(new_binary);
             return Err(e).context("Cannot place new binary - rolled back to previous version");
         }
