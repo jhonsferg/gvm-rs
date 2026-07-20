@@ -20,6 +20,9 @@ Thumbs.db
 # Local tooling - not part of the distributed project
 /other/
 
+# Personal incident-response workspace - not part of the distributed project
+/security/
+
 # Test artifacts
 /tmp/
 *.log
