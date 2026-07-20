@@ -454,4 +454,7 @@ jobs:
       - name: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+        # --allow-dirty: the version sync above intentionally modifies Cargo.toml
+        # without committing (see comment above) - cargo publish otherwise
+        # refuses to package a working directory with uncommitted changes.
+        run: cargo publish --allow-dirty
