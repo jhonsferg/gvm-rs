@@ -100,3 +100,18 @@ extended for new behaviour.
 
 By contributing you agree that your contributions will be licensed under the
 [MIT License](LICENSE). This keeps the project free and open for everyone.
+
+---
+
+## Malicious use and unofficial copies
+
+This project's openness (MIT license, public source, no gatekeeping on contributions) is meant to
+benefit developers, not to provide cover for abuse. Forking and modifying `gvm-rs` is always fine.
+What is not acceptable, and will be treated as a security incident rather than a licensing dispute,
+is republishing this project (or a modified copy of it) in a way designed to impersonate it while
+distributing malware, credential stealers, or other harmful payloads to people who believe they are
+using the original tool.
+
+See [SECURITY.md](SECURITY.md#malicious-forks--clones) for what we consider a malicious clone, how
+to report one, and what action we take (independent verification, followed by an abuse report to
+GitHub requesting takedown and account suspension, with public disclosure once resolved).
