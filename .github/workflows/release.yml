@@ -405,3 +405,41 @@ jobs:
             cat dist/checksums.txt
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Publish to crates.io ──────────────────────────────────────────────────────
+  #
+  # Runs after the GitHub Release is published so crates.io always reflects a
+  # version that has already passed the full build/test/release pipeline.
+  # `cargo publish` is idempotent-safe here: if this exact version is already on
+  # crates.io (e.g. workflow re-run), the step fails without side effects.
+  publish-crate:
+    name: Publish to crates.io
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      # This project's release version comes entirely from the git tag (see the
+      # auto-tag-and-release job in ci.yml) - Cargo.toml's `version` field is not
+      # bumped as part of that process. cargo publish, unlike the GitHub release
+      # pipeline, has no concept of git tags: it always publishes whatever version
+      # is in Cargo.toml. Sync it from the tag here, for this ephemeral checkout
+      # only - nothing is committed back to the repository.
+      - name: Sync Cargo.toml version from tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          TAG_VERSION="${TAG#v}"
+          echo "Setting Cargo.toml version to ${TAG_VERSION} (from tag ${TAG})"
+          sed -i "0,/^version = \".*\"/s//version = \"${TAG_VERSION}\"/" Cargo.toml
+          grep -m1 '^version' Cargo.toml
+
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
