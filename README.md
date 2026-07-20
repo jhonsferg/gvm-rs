@@ -573,6 +573,22 @@ Releases are created automatically: every merge to `main` that passes CI trigger
 
 ---
 
+## 🔒 Verifying you're on the real project
+
+Only trust downloads that come from **GitHub Releases on this exact repository**:
+`https://github.com/jhonsferg/gvm-rs/releases`
+
+Do not trust:
+- Download buttons or "release" links that point to a raw file inside a repo tree (e.g. `.../raw/refs/heads/main/...`) instead of the Releases page.
+- Copies of this project hosted under a different GitHub account, even if the name, README, or commit history look identical - clones are not maintained by us and are not covered by this project's security process.
+- Any instructions telling you to bypass a Windows SmartScreen, macOS Gatekeeper, or antivirus warning to run a `gvm` binary. Legitimate releases are checksummed (`checksums.txt`) and do not require disabling OS protections.
+
+This project's real binaries are always built by the [`release.yml` GitHub Action](.github/workflows/release.yml) in this repository and shipped with SHA-256 checksums and SBOM files - never as a standalone `.zip`/`.exe` committed directly into source control.
+
+If you find a copy of this project distributing something other than the source in this repository (especially compiled binaries not produced by our CI), please report it - see [SECURITY.md](SECURITY.md#malicious-forks--clones).
+
+---
+
 ## 📄 License
 
 MIT - see [LICENSE](LICENSE).
