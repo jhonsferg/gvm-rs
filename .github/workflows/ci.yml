@@ -82,10 +82,17 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   # ── Unit tests - Windows · Linux · macOS ─────────────────────────────────────
+  #
+  # Intentionally no job-level `if` here (unlike `lint`): a job-level `if` on a
+  # matrix job skips the whole job *before* the matrix expands, which posts a
+  # single check run literally named "Test (${{ matrix.os }})" instead of the
+  # three required contexts ("Test (ubuntu-latest)" etc.) - those then stay
+  # "Expected" forever and block merging. Guarding every step instead lets the
+  # matrix expand normally; each OS still gets its own named check, it just
+  # completes almost instantly with nothing to do when code changes are absent.
   test:
     name: Test (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -96,19 +103,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+        if: needs.changes.outputs.code == 'true'
 
       - name: Install Rust stable
+        if: needs.changes.outputs.code == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo registry and build artifacts
+        if: needs.changes.outputs.code == 'true'
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           key: ${{ matrix.os }}
 
       - name: Run unit tests
+        if: needs.changes.outputs.code == 'true'
         run: cargo test --all-targets -- --nocapture
 
       - name: Verify release build compiles
+        if: needs.changes.outputs.code == 'true'
         run: cargo build --release
 
   # ── Auto-tag + release (push to main only) ────────────────────────────────────
