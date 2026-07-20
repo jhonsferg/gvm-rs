@@ -23,9 +23,41 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  # ── Detect whether this push/PR touches anything that affects the built binary ──
+  #
+  # Pipeline/tooling-only changes (workflows, CI scripts) and docs already excluded
+  # by paths-ignore above should not pay for a full lint+test+release cycle. Jobs
+  # below are still triggered normally and report a `skipped` conclusion when
+  # `code` is false - unlike relying on paths-ignore alone, a `skipped` job still
+  # posts a check run, so required status checks in branch protection are
+  # satisfied instead of hanging as "expected but never reported".
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+      - uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - "src/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "build.rs"
+              - "rust-toolchain.toml"
+              - ".github/workflows/ci.yml"
+              - ".github/workflows/release.yml"
+
   # ── Code format & lint ────────────────────────────────────────────────────────
   lint:
     name: Lint & Format
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -49,6 +81,8 @@ jobs:
   # ── Unit tests - Windows · Linux · macOS ─────────────────────────────────────
   test:
     name: Test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -89,7 +123,14 @@ jobs:
   auto-release:
     name: Auto Tag & Release
     needs: [lint, test]
+    # lint/test are skipped (not run) for pushes that only touch non-code paths
+    # (see the `changes` job) - `always()` plus explicit result checks lets this
+    # job proceed on a skip, since the default implicit `success()` condition
+    # would otherwise treat "skipped" as blocking, same as a failure.
     if: |
+      always() &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
       github.ref == 'refs/heads/main' &&
       github.event_name == 'push' &&
       github.actor != 'github-actions[bot]'
