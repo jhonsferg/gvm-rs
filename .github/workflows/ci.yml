@@ -25,11 +25,16 @@ env:
 jobs:
   # ── Detect whether this push/PR touches anything that affects the built binary ──
   #
-  # Pipeline/tooling-only changes (workflows, CI scripts) and docs already excluded
-  # by paths-ignore above should not pay for a full lint+test+release cycle. Jobs
-  # below are still triggered normally and report a `skipped` conclusion when
-  # `code` is false - unlike relying on paths-ignore alone, a `skipped` job still
-  # posts a check run, so required status checks in branch protection are
+  # Deliberately narrow: only source/dependency files count as "code". Pipeline
+  # files (this workflow included), scripts, and docs must never trigger a full
+  # lint+test+release cycle, even when they change build/release *logic* - a
+  # workflow YAML bug (like the one fixed for release.yml's idempotency) isn't
+  # something `cargo test`/`clippy` would catch anyway, so gating those files
+  # behind the Rust test suite never bought real protection.
+  #
+  # Jobs below are still triggered normally and report a `skipped` conclusion
+  # when `code` is false - unlike relying on paths-ignore alone, a `skipped` job
+  # still posts a check run, so required status checks in branch protection are
   # satisfied instead of hanging as "expected but never reported".
   changes:
     name: Detect code changes
@@ -50,8 +55,6 @@ jobs:
               - "Cargo.lock"
               - "build.rs"
               - "rust-toolchain.toml"
-              - ".github/workflows/ci.yml"
-              - ".github/workflows/release.yml"
 
   # ── Code format & lint ────────────────────────────────────────────────────────
   lint:
@@ -79,10 +82,17 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   # ── Unit tests - Windows · Linux · macOS ─────────────────────────────────────
+  #
+  # Intentionally no job-level `if` here (unlike `lint`): a job-level `if` on a
+  # matrix job skips the whole job *before* the matrix expands, which posts a
+  # single check run literally named "Test (${{ matrix.os }})" instead of the
+  # three required contexts ("Test (ubuntu-latest)" etc.) - those then stay
+  # "Expected" forever and block merging. Guarding every step instead lets the
+  # matrix expand normally; each OS still gets its own named check, it just
+  # completes almost instantly with nothing to do when code changes are absent.
   test:
     name: Test (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -93,19 +103,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
+        if: needs.changes.outputs.code == 'true'
 
       - name: Install Rust stable
+        if: needs.changes.outputs.code == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo registry and build artifacts
+        if: needs.changes.outputs.code == 'true'
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           key: ${{ matrix.os }}
 
       - name: Run unit tests
+        if: needs.changes.outputs.code == 'true'
         run: cargo test --all-targets -- --nocapture
 
       - name: Verify release build compiles
+        if: needs.changes.outputs.code == 'true'
         run: cargo build --release
 
   # ── Auto-tag + release (push to main only) ────────────────────────────────────
@@ -115,11 +130,12 @@ jobs:
   # main is needed, so branch protection is never triggered.
   # Pushing the tag fires release.yml which cross-compiles and publishes binaries.
   #
-  # Bump rules:
+  # Bump rules (both the commit prefix AND an actual code/dependency file
+  # change are required - see the file-path check in "Determine version bump"):
   #   feat!: / BREAKING CHANGE  -> major
   #   feat:                      -> minor
   #   fix: / perf: / refactor: / security:  -> patch
-  #   docs: / chore: / ci:       -> no release
+  #   docs: / chore: / ci:, or no src/Cargo.*/build.rs/rust-toolchain.toml change -> no release
   auto-release:
     name: Auto Tag & Release
     needs: [lint, test]
@@ -170,6 +186,25 @@ jobs:
             BUMP="minor"
           elif echo "$COMMITS" | grep -qE '^(fix|perf|refactor|security)(\([^)]*\))?:'; then
             BUMP="patch"
+          fi
+
+          # A Conventional Commit prefix alone is not enough: require that at
+          # least one file actually relevant to the built binary changed too.
+          # Otherwise e.g. "fix(ci): ..." on a workflow-only change would tag
+          # and publish a release with no code difference from the last one.
+          if [ "$BUMP" != "none" ]; then
+            if git rev-parse "${LATEST_TAG}" >/dev/null 2>&1; then
+              CHANGED_FILES=$(git diff --name-only "${LATEST_TAG}..HEAD")
+            else
+              CHANGED_FILES=$(git log --name-only --format="")
+            fi
+            echo "Changed files since ${LATEST_TAG}:"
+            echo "$CHANGED_FILES"
+
+            if ! echo "$CHANGED_FILES" | grep -qE '^(src/|Cargo\.toml$|Cargo\.lock$|build\.rs$|rust-toolchain\.toml$)'; then
+              echo "Commit prefix implies a release, but no code/dependency files changed - skipping."
+              BUMP="none"
+            fi
           fi
 
           echo "Bump type: $BUMP"
