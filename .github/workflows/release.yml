@@ -364,12 +364,24 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
 
-          gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "gvm ${TAG}" \
-            --notes-file /tmp/release_notes.md \
-            --latest \
-            --verify-tag
+          # Idempotent: this workflow can be re-dispatched against an existing tag
+          # (e.g. to retry a failed step further down the pipeline), in which case
+          # the release already exists and must be updated instead of created.
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists - updating it instead of creating"
+            gh release edit "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "gvm ${TAG}" \
+              --notes-file /tmp/release_notes.md \
+              --latest
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "gvm ${TAG}" \
+              --notes-file /tmp/release_notes.md \
+              --latest \
+              --verify-tag
+          fi
 
           echo "Uploading assets for ${TAG} ..."
           for file in dist/*; do
